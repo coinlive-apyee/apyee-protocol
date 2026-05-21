@@ -12,7 +12,7 @@ paths do not exist.
 ## Status — Soft Launch (Phase 1)
 
 - Per-chain deposit cap: **$500K USDC**
-- Per-user deposit cap: configurable by Owner
+- Per-user deposit cap: $10K USDC default (Owner-configurable per address)
 - Emergency pause: available (Guardian)
 - Withdrawals always enabled, even while paused
 
