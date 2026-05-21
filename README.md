@@ -11,7 +11,7 @@ paths do not exist.
 
 ## Status — Soft Launch (Phase 1)
 
-- Per-chain deposit cap: **$10K USDC**
+- Per-chain deposit cap: **$500K USDC**
 - Per-user deposit cap: configurable by Owner
 - Emergency pause: available (Guardian)
 - Withdrawals always enabled, even while paused
@@ -89,7 +89,7 @@ Until audit completion, the protocol operates with conservative deposit caps
 | Single-strategy absolute cap | 4000 bps (40%) | `MAX_ALLOCATION_BPS_ABSOLUTE` |
 | Recommended idle ratio | ≥10% | `MIN_IDLE_BPS` (guideline) |
 | Auto-blacklist cooldown | 72h | `BLACKLIST_COOLDOWN` |
-| Phase 1 per-chain deposit cap | $10K USDC | Per-deploy, Owner-configurable |
+| Soft Launch per-chain deposit cap | $500K USDC | Per-deploy, Owner-configurable |
 
 ---
 
