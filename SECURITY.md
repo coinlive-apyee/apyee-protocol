@@ -5,7 +5,7 @@
 If you discover a security vulnerability in Apyee Protocol, please report it
 privately via:
 
-- **Email**: security@apyee.xyz
+- **Email**: support@apyee.com
 
 **Do NOT** open a public GitHub issue for security bugs.
 
@@ -41,7 +41,7 @@ within **7 days**.
 
 We follow **responsible (coordinated) disclosure**:
 
-1. Reporter contacts us privately via `security@apyee.xyz`.
+1. Reporter contacts us privately via `support@apyee.com`.
 2. We confirm receipt within 48 hours.
 3. We work on a fix and coordinate disclosure timing with the reporter.
 4. After the fix is deployed, we publish a security advisory crediting the
@@ -81,4 +81,4 @@ initial email and we will respond with the current key fingerprint.
 
 ## Contact
 
-`security@apyee.xyz`
+`support@apyee.com`

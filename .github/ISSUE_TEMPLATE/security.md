@@ -10,7 +10,7 @@ assignees: ''
 
 Please report security issues **privately** to:
 
-**`security@apyee.xyz`**
+**`support@apyee.com`**
 
 See [SECURITY.md](../../SECURITY.md) for full disclosure policy, scope, and
 expected response times.
@@ -33,7 +33,7 @@ public issue. Coordinate disclosure timing with us via email.
 
 ## Suggested email template (for private report)
 
-When emailing `security@apyee.xyz`, please include:
+When emailing `support@apyee.com`, please include:
 
 1. **Affected contract / function** (e.g. `Vault.sol :: withdraw`)
 2. **Vulnerability class** (e.g. reentrancy, oracle manipulation, access control)

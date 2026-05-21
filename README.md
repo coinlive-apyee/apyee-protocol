@@ -39,7 +39,7 @@ planned post-soft-launch.
 Until audit completion, the protocol operates with conservative deposit caps
 (see above) and a 3-role permission model designed to limit operator authority.
 
-**Use at your own risk.** Report security issues to `security@apyee.xyz`.
+**Use at your own risk.** Report security issues to `support@apyee.com`.
 
 ---
 
@@ -171,7 +171,7 @@ derivative works is restricted per BUSL terms.
 
 ## Security Contact
 
-`security@apyee.xyz`
+`support@apyee.com`
 
 For responsible disclosure of vulnerabilities. Please do not open public issues
 for security bugs.
