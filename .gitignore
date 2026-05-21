@@ -1,0 +1,63 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Hardhat artifacts
+cache/
+artifacts/
+typechain-types/
+
+# Coverage
+coverage/
+coverage.json
+.coverage_artifacts/
+.coverage_cache/
+.coverage_contracts/
+
+# Environment
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+*.swp
+*.swo
+.claude/
+
+# Build
+dist/
+build/
+
+# Hardhat Ignition
+ignition/deployments/chain-*/
+
+# Per-chain deployment records (commit only mainnet/base/arbitrum/bsc; ignore localhost/test runs)
+deployments/localhost.json
+deployments/hardhat.json
+
+# Manual-verify artifacts (regenerable, contain verbose source dumps)
+manual-verify/
+
+# Gas report
+gas-report.txt
+
+# Misc
+*.tsbuildinfo
+
+# Treasury fee redemption batches are dated and re-generated each quarter from current
+# on-chain Treasury balance. Commit selectively as audit evidence — default ignored to
+# keep safe-batches/ folder clean of per-quarter ephemera.
+safe-batches/treasury-redeem-*.json
