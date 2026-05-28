@@ -65,10 +65,22 @@ Severity classification follows the
 
 ## Audit Status
 
-**Pre-audit.** A formal solo audit is planned post-soft-launch.
+**Pre-audit (as of 2026-05-28).** The Soft Launch deployment is tagged
+[`v1.0.0`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v1.0.0).
 
-The audit commit hash will be tagged as `v1.0.0-soft-launch` (or a subsequent
-release tag) and published in the README's Audit section once available.
+Audit timeline:
+
+| Stage | Target | Status |
+|---|---|---|
+| Internal review + mainnet fork testing | Pre-launch | Complete (2026-05) |
+| Solo audit (single firm) | Post-Soft Launch | Planned for 2026 Q3 |
+| Contest audit (Code4rena / Cantina / Sherlock) | Post-Solo | Planned for 2026 Q4 |
+| Bug bounty program | Post-Solo audit | Planned |
+
+Deposit caps during pre-audit operation are intentionally conservative
+(`$500K`/chain Soft Launch, `$10K`/user Free tier) and Owner-tightenable at any
+time via `setDepositCap` / `setDefaultUserCap` Multi-sig calls. The audit
+commit hash will be published in this section once the engagement begins.
 
 ---
 

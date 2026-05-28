@@ -9,25 +9,70 @@ paths do not exist.
 
 ---
 
-## Status — Soft Launch (Phase 1)
+## Status — Soft Launch (v1.0.0, 2026-05-28)
 
 - Per-chain deposit cap: **$500K USDC**
 - Per-user deposit cap: $10K USDC default (Owner-configurable per address)
+- Performance fee: 1500 bps (15%, share-price model — see Core Design)
 - Emergency pause: available (Guardian)
 - Withdrawals always enabled, even while paused
+- Release tag: [`v1.0.0`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v1.0.0)
+- `Vault.VERSION_HASH()`: `0x06c015bd22b4c69690933c1058878ebdfef31f9aaae40bbe86d8a09fe1b2972c`
+  (= `keccak256("1.0.0")` — assert on-chain to verify generation)
 
 ---
 
 ## Deployed Contracts
 
+Machine-readable: [`deployments/v1-prod.json`](deployments/v1-prod.json)
+
+### Vaults
+
 | Chain | Vault | Explorer |
 |---|---|---|
-| Ethereum | TBD | — |
-| Base | TBD | — |
-| Arbitrum | TBD | — |
-| BNB Chain | TBD | — |
+| Ethereum | `0xdDd394e75e95b877E1DB759b6b355da4F7f0Dc0c` | [etherscan](https://etherscan.io/address/0xdDd394e75e95b877E1DB759b6b355da4F7f0Dc0c#code) |
+| Base | `0xD31528927Dd47445E3EAF902a8b5A05bbC326BD6` | [basescan](https://basescan.org/address/0xD31528927Dd47445E3EAF902a8b5A05bbC326BD6#code) |
+| Arbitrum | `0x3D81A544691b810b82485802C49Fe1350Ba1Ecda` | [arbiscan](https://arbiscan.io/address/0x3D81A544691b810b82485802C49Fe1350Ba1Ecda#code) |
+| BNB Chain | `0xB0b040567e4A36E9e5D11985f0943E9225897C91` | [bscscan](https://bscscan.com/address/0xB0b040567e4A36E9e5D11985f0943E9225897C91#code) |
 
-Addresses will be published here on mainnet launch.
+All Vaults are **verified** with Exact Match on the respective explorer. Source identical to this repo at tag `v1.0.0`.
+
+### Strategy adapters
+
+**Ethereum** — 5 strategies
+- AaveV3Strategy (Aave V3): [`0xf90f06632ac5d6197892f258Db7776D577951AD8`](https://etherscan.io/address/0xf90f06632ac5d6197892f258Db7776D577951AD8#code)
+- CompoundV3Strategy (Compound V3): [`0x74d3bf1535bd9FF47adC97FdF653772a13C11643`](https://etherscan.io/address/0x74d3bf1535bd9FF47adC97FdF653772a13C11643#code)
+- MorphoStrategy (Steakhouse USDC MetaMorpho): [`0xa8204C618F6B88DE94b95A927b13DA8Daf61D9F7`](https://etherscan.io/address/0xa8204C618F6B88DE94b95A927b13DA8Daf61D9F7#code)
+- AaveV3Strategy (Spark pool): [`0x543A292deE59bfcb3Ecc0e5185814b2d80C94098`](https://etherscan.io/address/0x543A292deE59bfcb3Ecc0e5185814b2d80C94098#code)
+- FluidStrategy (Instadapp Fluid): [`0xF0B93e2452B82F27922df3C8A93397135F4C91dC`](https://etherscan.io/address/0xF0B93e2452B82F27922df3C8A93397135F4C91dC#code)
+
+**Base** — 4 strategies
+- AaveV3Strategy: [`0x870E0615A9274Ce7a3B5F6e805cF11f9529846b4`](https://basescan.org/address/0x870E0615A9274Ce7a3B5F6e805cF11f9529846b4#code)
+- CompoundV3Strategy: [`0xE20954F2716cD7652f07a7b6FAeb30C48b909574`](https://basescan.org/address/0xE20954F2716cD7652f07a7b6FAeb30C48b909574#code)
+- MorphoStrategy (Moonwell Flagship USDC): [`0xC1E3Fef3677b11a438509a09044593Db68Bb634D`](https://basescan.org/address/0xC1E3Fef3677b11a438509a09044593Db68Bb634D#code)
+- FluidStrategy: [`0x715A9d8F5f06624503be21c55bc04F344a2021Df`](https://basescan.org/address/0x715A9d8F5f06624503be21c55bc04F344a2021Df#code)
+
+**Arbitrum** — 4 strategies
+- AaveV3Strategy: [`0x606924314b8B4BE79d80719E7398ed8fA3Aa3e3f`](https://arbiscan.io/address/0x606924314b8B4BE79d80719E7398ed8fA3Aa3e3f#code)
+- CompoundV3Strategy: [`0xB0b040567e4A36E9e5D11985f0943E9225897C91`](https://arbiscan.io/address/0xB0b040567e4A36E9e5D11985f0943E9225897C91#code)
+- MorphoStrategy: [`0x141bf6c70649089590A4FA0b0172f1f7Aa0AC206`](https://arbiscan.io/address/0x141bf6c70649089590A4FA0b0172f1f7Aa0AC206#code)
+- FluidStrategy: [`0x06c3E33fB76B72A8f83d2A0507b2d0478a4bEf37`](https://arbiscan.io/address/0x06c3E33fB76B72A8f83d2A0507b2d0478a4bEf37#code)
+
+**BNB Chain** — 4 strategies
+- VenusStrategy (Compound V2 fork on BSC): [`0x141bf6c70649089590A4FA0b0172f1f7Aa0AC206`](https://bscscan.com/address/0x141bf6c70649089590A4FA0b0172f1f7Aa0AC206#code)
+- AaveV3Strategy: [`0x06c3E33fB76B72A8f83d2A0507b2d0478a4bEf37`](https://bscscan.com/address/0x06c3E33fB76B72A8f83d2A0507b2d0478a4bEf37#code)
+- AaveV3Strategy (Kinza pool): [`0xdFA3baB832d9f9D0FA8aE75b324F9007c79766F2`](https://bscscan.com/address/0xdFA3baB832d9f9D0FA8aE75b324F9007c79766F2#code)
+- FluidStrategy: [`0x91C4e348AaFb935c856666eeB2c13218897e664E`](https://bscscan.com/address/0x91C4e348AaFb935c856666eeB2c13218897e664E#code)
+
+### Operational roles
+
+| Role | Address | Notes |
+|---|---|---|
+| Owner / Treasury | [`0xEC4d3B6a39D61B85dF61cCb35CE693517992A98e`](https://etherscan.io/address/0xEC4d3B6a39D61B85dF61cCb35CE693517992A98e) | Gnosis Safe Multi-sig (same address on all 4 chains). Receives fee shares. |
+| Keeper | [`0x84c00eEdBb07C0782dE9758A75114Ee7194FA12c`](https://etherscan.io/address/0x84c00eEdBb07C0782dE9758A75114Ee7194FA12c) | Single EOA. Authorised to call `harvest` / `investToStrategy` / `divestFromStrategy` / `emergencyWithdraw` only. |
+| Guardian | [`0xD943214ECF438388ece5035855598010766Aaac1`](https://etherscan.io/address/0xD943214ECF438388ece5035855598010766Aaac1) | Single EOA. Authorised to call `pause()` only. |
+
+> **Verification tip**: call `Vault.VERSION_HASH()` on any of the 4 chains — must equal `0x06c015bd22b4c69690933c1058878ebdfef31f9aaae40bbe86d8a09fe1b2972c`. A different hash indicates a non-production deployment (e.g. internal `v1-dev` testbench).
 
 ---
 
@@ -58,14 +103,16 @@ Until audit completion, the protocol operates with conservative deposit caps
   Guardian (single EOA, pause-only).
 - **`pause()` does not block user `withdraw()`** — invariant-tested.
 
-### Strategy adapters (Phase 1)
+### Strategy adapters (Soft Launch v1.0.0 — 17 total)
 
-| Chain | Aave V3 | Compound V3 | Morpho | Venus | Fluid |
-|---|:---:|:---:|:---:|:---:|:---:|
-| Ethereum | ✓ | ✓ | ✓ | — | ✓ |
-| Base | ✓ | ✓ | — | — | — |
-| Arbitrum | ✓ | ✓ | — | — | — |
-| BNB Chain | — | — | — | ✓ | — |
+| Chain | Aave V3 | Compound V3 | Morpho | Spark | Venus | Kinza | Fluid |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| Ethereum | ✓ | ✓ | ✓ (Steakhouse) | ✓ | — | — | ✓ |
+| Base | ✓ | ✓ | ✓ (Moonwell) | — | — | — | ✓ |
+| Arbitrum | ✓ | ✓ | ✓ | — | — | — | ✓ |
+| BNB Chain | ✓ | — | — | — | ✓ | ✓ | ✓ |
+
+Per-strategy allocation cap: `MAX_ALLOCATION_BPS_ABSOLUTE = 4000 bps (40%)`. Spark / Kinza reuse `AaveV3Strategy.sol` (interface-compatible fork pools).
 
 ---
 

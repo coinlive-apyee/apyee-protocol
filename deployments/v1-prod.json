@@ -1,0 +1,84 @@
+{
+  "generation": "v1-prod",
+  "version": "1.0.0",
+  "versionHash": "0x06c015bd22b4c69690933c1058878ebdfef31f9aaae40bbe86d8a09fe1b2972c",
+  "deployedAt": "2026-05-28",
+  "tag": "v1.0.0",
+  "depositCapUsdc": "500000",
+  "defaultUserCapUsdc": "10000",
+  "feeRateBps": 1500,
+  "maxAllocationBpsAbsolute": 4000,
+  "maxFeeBps": 2000,
+  "roles": {
+    "ownerMultiSig": "0xEC4d3B6a39D61B85dF61cCb35CE693517992A98e",
+    "treasury": "0xEC4d3B6a39D61B85dF61cCb35CE693517992A98e",
+    "keeper": "0x84c00eEdBb07C0782dE9758A75114Ee7194FA12c",
+    "guardian": "0xD943214ECF438388ece5035855598010766Aaac1"
+  },
+  "chains": {
+    "ethereum": {
+      "chainId": 1,
+      "usdc": {
+        "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "decimals": 6
+      },
+      "vault": "0xdDd394e75e95b877E1DB759b6b355da4F7f0Dc0c",
+      "strategies": {
+        "aave":     "0xf90f06632ac5d6197892f258Db7776D577951AD8",
+        "compound": "0x74d3bf1535bd9FF47adC97FdF653772a13C11643",
+        "morpho":   "0xa8204C618F6B88DE94b95A927b13DA8Daf61D9F7",
+        "spark":    "0x543A292deE59bfcb3Ecc0e5185814b2d80C94098",
+        "fluid":    "0xF0B93e2452B82F27922df3C8A93397135F4C91dC"
+      }
+    },
+    "base": {
+      "chainId": 8453,
+      "usdc": {
+        "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        "decimals": 6
+      },
+      "vault": "0xD31528927Dd47445E3EAF902a8b5A05bbC326BD6",
+      "strategies": {
+        "aave":     "0x870E0615A9274Ce7a3B5F6e805cF11f9529846b4",
+        "compound": "0xE20954F2716cD7652f07a7b6FAeb30C48b909574",
+        "morpho":   "0xC1E3Fef3677b11a438509a09044593Db68Bb634D",
+        "fluid":    "0x715A9d8F5f06624503be21c55bc04F344a2021Df"
+      }
+    },
+    "arbitrum": {
+      "chainId": 42161,
+      "usdc": {
+        "address": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+        "decimals": 6
+      },
+      "vault": "0x3D81A544691b810b82485802C49Fe1350Ba1Ecda",
+      "strategies": {
+        "aave":     "0x606924314b8B4BE79d80719E7398ed8fA3Aa3e3f",
+        "compound": "0xB0b040567e4A36E9e5D11985f0943E9225897C91",
+        "morpho":   "0x141bf6c70649089590A4FA0b0172f1f7Aa0AC206",
+        "fluid":    "0x06c3E33fB76B72A8f83d2A0507b2d0478a4bEf37"
+      }
+    },
+    "bnb": {
+      "chainId": 56,
+      "usdc": {
+        "address": "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d",
+        "decimals": 18,
+        "note": "Binance-Peg USDC has 18 decimals (vs 6 on ETH/Base/Arb)"
+      },
+      "vault": "0xB0b040567e4A36E9e5D11985f0943E9225897C91",
+      "strategies": {
+        "venus":  "0x141bf6c70649089590A4FA0b0172f1f7Aa0AC206",
+        "aave":   "0x06c3E33fB76B72A8f83d2A0507b2d0478a4bEf37",
+        "kinza":  "0xdFA3baB832d9f9D0FA8aE75b324F9007c79766F2",
+        "fluid":  "0x91C4e348AaFb935c856666eeB2c13218897e664E"
+      },
+      "baseline": {
+        "depositor": "0x84c00eEdBb07C0782dE9758A75114Ee7194FA12c",
+        "usdc": "1.0",
+        "purpose": "Sub-wei dust protection for Venus strategy — permanent $1 baseline so vault is never empty.",
+        "depositTx": "0x5d9f7907ce10ea98ff4ad7af6bb5890e4528282f49ee527d497a43fe0a6a2ffe"
+      }
+    }
+  }
+}
