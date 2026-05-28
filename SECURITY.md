@@ -1,5 +1,7 @@
 # Security Policy
 
+**Website**: <https://apyee.com> &nbsp;·&nbsp; **Repository**: <https://github.com/coinlive-apyee/apyee-protocol>
+
 ## Reporting a Vulnerability
 
 If you discover a security vulnerability in Apyee Protocol, please report it

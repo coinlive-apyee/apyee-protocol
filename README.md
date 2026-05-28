@@ -2,6 +2,8 @@
 
 > Non-custodial, AI-powered stablecoin yield aggregator — ERC-4626 Vault.
 
+**Website**: [apyee.com](https://apyee.com) &nbsp;·&nbsp; **Release**: [`v1.0.0`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v1.0.0) &nbsp;·&nbsp; **License**: BUSL-1.1 &nbsp;·&nbsp; **Security**: [`support@apyee.com`](mailto:support@apyee.com)
+
 Apyee allocates user-deposited USDC across whitelisted DeFi lending strategies
 on Ethereum, Base, Arbitrum, and BNB Chain. The Vault is **immutable** (no
 upgradeable proxy), and the operator **cannot move user funds** — those code
@@ -204,6 +206,18 @@ scripts/
 - `SafeERC20` for all token transfers.
 - ERC-4626 inflation-attack mitigation via decimals offset (OpenZeppelin v5).
 - `totalAssets()` == sum of strategy balances + idle (invariant).
+
+---
+
+## Links
+
+- **Product**: <https://apyee.com>
+- **GitHub**: <https://github.com/coinlive-apyee/apyee-protocol>
+- **Release notes**: [CHANGELOG.md](CHANGELOG.md)
+- **Security policy**: [SECURITY.md](SECURITY.md)
+- **Code of conduct**: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- **Contributing**: [CONTRIBUTING.md](CONTRIBUTING.md)
+- **Machine-readable addresses**: [deployments/v1-prod.json](deployments/v1-prod.json)
 
 ---
 
