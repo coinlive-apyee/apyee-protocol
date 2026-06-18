@@ -264,7 +264,7 @@ scripts/
 
 ## Security Properties (test-enforced)
 
-- Owner cannot withdraw user funds to an arbitrary address (no such function exists).
+- Owner cannot withdraw user funds to an arbitrary address (no such function exists — see [docs/TRUST_MODEL.md](docs/TRUST_MODEL.md) for the line-by-line audit).
 - `setFeeRate` reverts on values > `MAX_FEE`.
 - `pause()` does not block `withdraw()` or `redeem()`.
 - Reentrancy guards on every state-changing external-call path.
@@ -287,6 +287,7 @@ scripts/
 - **Contributing**: [CONTRIBUTING.md](CONTRIBUTING.md)
 - **Machine-readable addresses**: [deployments/v2-prod/](deployments/v2-prod/)
 - **Design rationale (for audit)**: [docs/V2_DESIGN.md](docs/V2_DESIGN.md)
+- **Trust model — what the Owner can and cannot do**: [docs/TRUST_MODEL.md](docs/TRUST_MODEL.md)
 
 ---
 
