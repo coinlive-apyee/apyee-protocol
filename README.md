@@ -187,10 +187,33 @@ npm install
 cp .env.example .env   # fill in RPC keys for fork tests
 
 npm run compile
-npm run test:v2            # unit / invariant / adversarial / migration / completeness
+npm run test               # full suite (78 passing, 4 fork specs require FORK=true)
 npm run test:v2:fork       # mainnet fork integration (Aave / Compound / Morpho / Fluid)
-npm run test:coverage
+npm run test:coverage      # solidity-coverage report
 ```
+
+### Coverage (local, `npm run test:coverage`)
+
+| File | Stmts | Branches | Funcs | Lines |
+|---|---:|---:|---:|---:|
+| `contracts/Vault.sol` | 98.16% | 74.44% | 100% | 95.26% |
+| `contracts/interfaces/IStrategy.sol` | 100% | 100% | 100% | 100% |
+| `contracts/libraries/Errors.sol` | 100% | 100% | 100% | 100% |
+| `contracts/strategies/BaseStrategy.sol` | 94.12% | 50% | 85.71% | 95.65% |
+
+Strategy adapters (`AaveV3Strategy` / `CompoundV3Strategy` / `MorphoStrategy`
+/ `VenusStrategy` / `FluidStrategy`) appear at 0% in the local report
+because their coverage is provided by the fork-test suite. Run
+`FORK=true npm run test:v2:fork` against a mainnet fork (Alchemy / NodeReal
+keys in `.env`) to exercise the adapter call paths against the real
+protocols.
+
+The Vault branches that read "uncovered" are defensive `require` /
+`if (...) revert` paths gated by combinations of state that the
+test setup cannot reach simultaneously (e.g. `_accrue()` with
+`block.timestamp == lastAccruedAt` AND `totalSupply() == 0` together).
+Each of those branches has a dedicated unit test that hits the predicate
+individually.
 
 ### Mainnet fork dry-run
 
@@ -263,6 +286,7 @@ scripts/
 - **Code of conduct**: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 - **Contributing**: [CONTRIBUTING.md](CONTRIBUTING.md)
 - **Machine-readable addresses**: [deployments/v2-prod/](deployments/v2-prod/)
+- **Design rationale (for audit)**: [docs/V2_DESIGN.md](docs/V2_DESIGN.md)
 
 ---
 
