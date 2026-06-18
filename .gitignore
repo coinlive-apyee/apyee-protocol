@@ -54,6 +54,11 @@ manual-verify/
 # Gas report
 gas-report.txt
 
+# Static analysis raw outputs (large; reproduce via `slither .` per docs/STATIC_ANALYSIS.md)
+slither-report.json
+slither-output.log
+mythril-output.txt
+
 # Misc
 *.tsbuildinfo
 

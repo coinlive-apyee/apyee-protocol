@@ -26,12 +26,12 @@ chains plus Aggressive on Base.
 | Vault permissions / 3-role separation / asset-movement paths | **Line-by-line documented** | [docs/TRUST_MODEL.md](docs/TRUST_MODEL.md) — every `onlyOwner` / `onlyKeeper` / `onlyGuardian` function enumerated with line references against `Vault.sol`. |
 | Streaming-fee math (`_accrue()`) — **new in V2** | Internal review + unit / invariant / adversarial test suite (78 passing) | [docs/V2_DESIGN.md](docs/V2_DESIGN.md) §3 documents the four audit-critical fixes and the invariant proofs. Coverage table in this README. |
 | Tier-parameterized allocation cap (immutable) | Verified across 3 tiers | `test/v2/Vault.spec.ts` includes per-tier deploy + invariant tests. |
+| Static analysis (Slither 0.11.5) | **Complete — no real findings** | [docs/STATIC_ANALYSIS.md](docs/STATIC_ANALYSIS.md): 51 patterns surfaced, all classified as false positives or known design (acknowledged inline). Reproducible via `slither .` |
 
 ### What's pending
 
 | Item | Status |
 |---|---|
-| Static analysis (Slither / Mythril) — full report public | In preparation |
 | Foundry-style fuzz harness for `_accrue()` precision | In preparation |
 | Bug bounty (Immunefi) | In preparation |
 | External solo audit | Planned post-Soft-Launch (after public-side stress) |
