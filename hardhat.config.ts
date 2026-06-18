@@ -42,10 +42,7 @@ const config: HardhatUserConfig = {
   solidity: {
     version: "0.8.28",
     settings: {
-      optimizer: {
-        enabled: true,
-        runs: 200,
-      },
+      optimizer: { enabled: true, runs: 200 },
       viaIR: false,
       evmVersion: "cancun",
     },
@@ -54,6 +51,9 @@ const config: HardhatUserConfig = {
     hardhat: {
       chainId: 31337,
       forking: resolveForkConfig(),
+      // Coverage instrumentation roughly triples bytecode; V1+V2 fixtures (Vault.migration.spec.ts)
+      // deploy both contracts in a single setup and need headroom over the 30M default.
+      blockGasLimit: 100_000_000,
       // Hardhat needs a hardfork activation history for non-Ethereum forks.
       // BSC / Base / Arbitrum reached Shanghai-equivalent feature parity well before block 0;
       // using shanghai across the entire history avoids "No known hardfork" errors on recent
@@ -99,11 +99,11 @@ const config: HardhatUserConfig = {
     // separate repos with their own RPC config. Swap providers freely (e.g. move all four
     // to Alchemy paid tier later) without affecting contract behavior.
     mainnet: {
-      // Alchemy Ethereum endpoint returns `to: ""` (not null) for CREATE tx responses,
-      // which ethers v6.16 rejects with "invalid value for value.to". publicnode returns
-      // proper `to: null` and worked first try for Beta deploy. Alchemy still used for
-      // fork tests via resolveForkConfig (fork RPC doesn't go through this path).
-      url: "https://ethereum-rpc.publicnode.com",
+      // 2026-05-26: publicnode 가 CREATE tx response 에 to: "" 반환 시작 → ethers v6.16 reject.
+      // Alchemy 우선 사용. 만약 Alchemy 도 to:"" 반환하면 DRPC / LlamaRPC 로 변경 필요.
+      url: ALCHEMY_API_KEY
+        ? `https://eth-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`
+        : "https://ethereum-rpc.publicnode.com",
       chainId: 1,
       accounts,
     },
