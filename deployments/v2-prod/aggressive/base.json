@@ -1,0 +1,50 @@
+{
+  "network": "base",
+  "chainId": 8453,
+  "timestamp": "2026-06-17T23:51:41.551Z",
+  "deployer": "0xD943214ECF438388ece5035855598010766Aaac1",
+  "contracts": {
+    "vault": "0x3757801E4E605aa0794e3c249bDDD849C98E0ff2",
+    "strategies": {
+      "aave": "0xD787bB01138Af2985D234EDd49b0363b7EdBDdcf",
+      "compound": "0x4277F6D7d1E83D1B6d3605DC12eC59efAe186207",
+      "morpho": "0xc4802E02Cf2c30ffBDf5D181a1419cE3d2566145",
+      "fluid": "0xe70e7A3493eaB9897979Ca677365751FB214521d",
+      "gtusdcp": "0xd15db6037745Ec03F8b44193C1172B55bfD0d87D",
+      "steakusdc": "0xd8f8Bd59305cA4f7975aFf03Caf3B934309F8d30",
+      "steakprime": "0xAac24b319Ca3c00ABF6f64cE9c273D122F958837",
+      "pusdc": "0xbb5eFEc910cd462682248b8811Fcc29A0DF3dA06"
+    },
+    "strategyMeta": {
+      "aave": { "slug": "aave-v3", "display": "Aave V3" },
+      "compound": { "slug": "compound-v3", "display": "Compound V3" },
+      "morpho": { "slug": "moonwell-flagship-usdc", "display": "Moonwell Flagship USDC" },
+      "fluid": { "slug": "fluid", "display": "Fluid" },
+      "gtusdcp": { "slug": "gauntlet-usdc-prime", "display": "Gauntlet USDC Prime" },
+      "steakusdc": { "slug": "steakhouse-usdc", "display": "Steakhouse USDC" },
+      "steakprime": { "slug": "steakhouse-prime-usdc", "display": "Steakhouse Prime USDC" },
+      "pusdc": { "slug": "pangolins-usdc", "display": "Pangolins USDC" }
+    }
+  },
+  "config": {
+    "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "name": "Apyee USDC Vault V2 (Aggressive)",
+    "symbol": "apUSDC-a",
+    "initialOwner": "0xD943214ECF438388ece5035855598010766Aaac1",
+    "keeper": "0x84c00eEdBb07C0782dE9758A75114Ee7194FA12c",
+    "guardian": "0xD943214ECF438388ece5035855598010766Aaac1",
+    "treasury": "0xEC4d3B6a39D61B85dF61cCb35CE693517992A98e",
+    "feeRateBps": 1500,
+    "depositCap": "500000000000",
+    "defaultUserCap": "10000000000",
+    "version": "2.0.0-prod-aggressive",
+    "versionHash": "0x08cea3a61fa9df526030aa93f19280a5e701e966a04a5b02c34a589d7721a72b",
+    "maxAllocationAbsolute": 6000,
+    "tier": "aggressive"
+  },
+  "ownershipTransferred": {
+    "to": "0xEC4d3B6a39D61B85dF61cCb35CE693517992A98e",
+    "txHash": "0xb35d1b53d85a2c3fd7e8de12b8cdd73365909cdbf42d256fbad86f989e65bf14",
+    "blockNumber": 47475597
+  }
+}

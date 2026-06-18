@@ -2,7 +2,7 @@
 
 > Non-custodial, AI-powered stablecoin yield aggregator — ERC-4626 Vault.
 
-**Website**: [apyee.com](https://apyee.com) &nbsp;·&nbsp; **Release**: [`v1.0.0`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v1.0.0) &nbsp;·&nbsp; **License**: BUSL-1.1 &nbsp;·&nbsp; **Security**: [`support@apyee.com`](mailto:support@apyee.com)
+**Website**: [apyee.com](https://apyee.com) &nbsp;·&nbsp; **Release**: `v2.0.0` &nbsp;·&nbsp; **License**: BUSL-1.1 &nbsp;·&nbsp; **Security**: [`support@apyee.com`](mailto:support@apyee.com)
 
 Apyee allocates user-deposited USDC across whitelisted DeFi lending strategies
 on Ethereum, Base, Arbitrum, and BNB Chain. The Vault is **immutable** (no
@@ -11,110 +11,149 @@ paths do not exist.
 
 ---
 
-## Status — Soft Launch (v1.0.0, 2026-05-28)
+## Status — V2 Soft Launch (v2.0.0, 2026-06)
 
-- Per-chain deposit cap: **$500K USDC**
+V2 introduces a **streaming performance fee** and a **tier-based allocation
+cap** so a single audited Solidity source can produce multiple deployment
+configs (Conservative / Balanced / Aggressive). Phase 1 launches Balanced on
+all 4 chains plus Aggressive on Base.
+
+- Per-chain deposit cap: **$500K USDC** (Conservative tier: $250K)
 - Per-user deposit cap: $10K USDC default (Owner-configurable per address)
-- Performance fee: 1500 bps (15%, share-price model — see Core Design)
+- Performance fee: **1500 bps (15%)**, streaming model — accrued continuously
+  on share price growth, hooked into `_deposit` / `_withdraw` / `setFeeRate`
 - Emergency pause: available (Guardian)
 - Withdrawals always enabled, even while paused
-- Release tag: [`v1.0.0`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v1.0.0)
-- `Vault.VERSION_HASH()`: `0x06c015bd22b4c69690933c1058878ebdfef31f9aaae40bbe86d8a09fe1b2972c`
-  (= `keccak256("1.0.0")` — assert on-chain to verify generation)
+
+### Per-tier `MAX_ALLOCATION_BPS_ABSOLUTE`
+
+| Tier | Cap | Rationale |
+|---|---|---|
+| Conservative | 2500 bps (25%) | Blue-chip pools only, max diversification |
+| Balanced | 4000 bps (40%) | V1-equivalent risk policy |
+| Aggressive | 6000 bps (60%) | Higher per-pool concentration for curated MetaMorpho vaults |
+
+The cap is an `immutable` constructor parameter — embedded in runtime
+bytecode at deploy time. Cannot be changed post-deploy.
+
+### `VERSION_HASH` matrix
+
+| Tier | `keccak256(version)` |
+|---|---|
+| Balanced (prod) | `0xfdb55585a303e75f7a4789857f4098cb223dc75837bbb8578ac57d0410e2d833` |
+| Aggressive (prod) | `0x08cea3a61fa9df526030aa93f19280a5e701e966a04a5b02c34a589d7721a72b` |
+
+Each tier is a distinct on-chain generation. Call `Vault.VERSION_HASH()` to
+verify which tier you're interacting with — a different hash indicates a
+non-production deployment (e.g. internal `v2-dev` testbench).
 
 ---
 
-## Deployed Contracts
+## Deployed Contracts (V2)
 
-Machine-readable: [`deployments/v1-prod.json`](deployments/v1-prod.json)
+Machine-readable: [`deployments/v2-prod/`](deployments/v2-prod/)
 
 ### Vaults
 
-| Chain | Vault | Explorer |
-|---|---|---|
-| Ethereum | `0xdDd394e75e95b877E1DB759b6b355da4F7f0Dc0c` | [etherscan](https://etherscan.io/address/0xdDd394e75e95b877E1DB759b6b355da4F7f0Dc0c#code) |
-| Base | `0xD31528927Dd47445E3EAF902a8b5A05bbC326BD6` | [basescan](https://basescan.org/address/0xD31528927Dd47445E3EAF902a8b5A05bbC326BD6#code) |
-| Arbitrum | `0x3D81A544691b810b82485802C49Fe1350Ba1Ecda` | [arbiscan](https://arbiscan.io/address/0x3D81A544691b810b82485802C49Fe1350Ba1Ecda#code) |
-| BNB Chain | `0xB0b040567e4A36E9e5D11985f0943E9225897C91` | [bscscan](https://bscscan.com/address/0xB0b040567e4A36E9e5D11985f0943E9225897C91#code) |
+| Chain | Tier | Vault | Explorer |
+|---|---|---|---|
+| Ethereum | Balanced | `0xE15e1095925aE629450c29b5E4F1dd5b68f6eD07` | [etherscan](https://etherscan.io/address/0xE15e1095925aE629450c29b5E4F1dd5b68f6eD07#code) |
+| Base | Balanced | `0x25e8527be8D7e090C4D0111Fa6b5061868F65de4` | [basescan](https://basescan.org/address/0x25e8527be8D7e090C4D0111Fa6b5061868F65de4#code) |
+| Base | Aggressive | `0x3757801E4E605aa0794e3c249bDDD849C98E0ff2` | [basescan](https://basescan.org/address/0x3757801E4E605aa0794e3c249bDDD849C98E0ff2#code) |
+| Arbitrum | Balanced | `0xAf9B06C3Ac9991366cE4bBeC6Ba3170EB2aa0Cb3` | [arbiscan](https://arbiscan.io/address/0xAf9B06C3Ac9991366cE4bBeC6Ba3170EB2aa0Cb3#code) |
+| BNB Chain | Balanced | `0x0e5102ecd1cb960eC62659DFA8Fa9a8349a777fD` | [bscscan](https://bscscan.com/address/0x0e5102ecd1cb960eC62659DFA8Fa9a8349a777fD#code) |
 
-All Vaults are **verified** with Exact Match on the respective explorer. Source identical to this repo at tag `v1.0.0`.
+All Vaults are **verified** on the respective explorer. Source identical to
+this repo at tag `v2.0.0`.
 
 ### Strategy adapters
 
-**Ethereum** — 5 strategies
-- AaveV3Strategy (Aave V3): [`0xf90f06632ac5d6197892f258Db7776D577951AD8`](https://etherscan.io/address/0xf90f06632ac5d6197892f258Db7776D577951AD8#code)
-- CompoundV3Strategy (Compound V3): [`0x74d3bf1535bd9FF47adC97FdF653772a13C11643`](https://etherscan.io/address/0x74d3bf1535bd9FF47adC97FdF653772a13C11643#code)
-- MorphoStrategy (Steakhouse USDC MetaMorpho): [`0xa8204C618F6B88DE94b95A927b13DA8Daf61D9F7`](https://etherscan.io/address/0xa8204C618F6B88DE94b95A927b13DA8Daf61D9F7#code)
-- AaveV3Strategy (Spark pool): [`0x543A292deE59bfcb3Ecc0e5185814b2d80C94098`](https://etherscan.io/address/0x543A292deE59bfcb3Ecc0e5185814b2d80C94098#code)
-- FluidStrategy (Instadapp Fluid): [`0xF0B93e2452B82F27922df3C8A93397135F4C91dC`](https://etherscan.io/address/0xF0B93e2452B82F27922df3C8A93397135F4C91dC#code)
+Full per-chain breakdown lives in
+[`deployments/v2-prod/balanced/<chain>.json`](deployments/v2-prod/balanced/)
+and [`deployments/v2-prod/aggressive/base.json`](deployments/v2-prod/aggressive/base.json).
+Strategy display / slug naming is the canonical source for downstream services.
 
-**Base** — 4 strategies
-- AaveV3Strategy: [`0x870E0615A9274Ce7a3B5F6e805cF11f9529846b4`](https://basescan.org/address/0x870E0615A9274Ce7a3B5F6e805cF11f9529846b4#code)
-- CompoundV3Strategy: [`0xE20954F2716cD7652f07a7b6FAeb30C48b909574`](https://basescan.org/address/0xE20954F2716cD7652f07a7b6FAeb30C48b909574#code)
-- MorphoStrategy (Moonwell Flagship USDC): [`0xC1E3Fef3677b11a438509a09044593Db68Bb634D`](https://basescan.org/address/0xC1E3Fef3677b11a438509a09044593Db68Bb634D#code)
-- FluidStrategy: [`0x715A9d8F5f06624503be21c55bc04F344a2021Df`](https://basescan.org/address/0x715A9d8F5f06624503be21c55bc04F344a2021Df#code)
+Summary:
 
-**Arbitrum** — 4 strategies
-- AaveV3Strategy: [`0x606924314b8B4BE79d80719E7398ed8fA3Aa3e3f`](https://arbiscan.io/address/0x606924314b8B4BE79d80719E7398ed8fA3Aa3e3f#code)
-- CompoundV3Strategy: [`0xB0b040567e4A36E9e5D11985f0943E9225897C91`](https://arbiscan.io/address/0xB0b040567e4A36E9e5D11985f0943E9225897C91#code)
-- MorphoStrategy: [`0x141bf6c70649089590A4FA0b0172f1f7Aa0AC206`](https://arbiscan.io/address/0x141bf6c70649089590A4FA0b0172f1f7Aa0AC206#code)
-- FluidStrategy: [`0x06c3E33fB76B72A8f83d2A0507b2d0478a4bEf37`](https://arbiscan.io/address/0x06c3E33fB76B72A8f83d2A0507b2d0478a4bEf37#code)
+| Chain | Tier | Strategies |
+|---|---|---|
+| Ethereum | Balanced | Aave V3 · Compound V3 · Smokehouse USDC (Morpho) · Spark · Fluid |
+| Base | Balanced | Aave V3 · Compound V3 · Moonwell Flagship USDC (Morpho) · Fluid |
+| Base | Aggressive | Aave V3 · Compound V3 · Moonwell Flagship USDC · Fluid · Gauntlet USDC Prime · Steakhouse USDC · Steakhouse Prime USDC · Pangolins USDC |
+| Arbitrum | Balanced | Aave V3 · Compound V3 · Gauntlet USDC Prime (Morpho) · Fluid |
+| BNB Chain | Balanced | Aave V3 · Fluid · Kinza · Venus |
 
-**BNB Chain** — 4 strategies
-- VenusStrategy (Compound V2 fork on BSC): [`0x141bf6c70649089590A4FA0b0172f1f7Aa0AC206`](https://bscscan.com/address/0x141bf6c70649089590A4FA0b0172f1f7Aa0AC206#code)
-- AaveV3Strategy: [`0x06c3E33fB76B72A8f83d2A0507b2d0478a4bEf37`](https://bscscan.com/address/0x06c3E33fB76B72A8f83d2A0507b2d0478a4bEf37#code)
-- AaveV3Strategy (Kinza pool): [`0xdFA3baB832d9f9D0FA8aE75b324F9007c79766F2`](https://bscscan.com/address/0xdFA3baB832d9f9D0FA8aE75b324F9007c79766F2#code)
-- FluidStrategy: [`0x91C4e348AaFb935c856666eeB2c13218897e664E`](https://bscscan.com/address/0x91C4e348AaFb935c856666eeB2c13218897e664E#code)
+`Spark` and `Kinza` reuse `AaveV3Strategy.sol` (interface-compatible fork
+pools). All `Morpho`-labelled rows reuse `MorphoStrategy.sol` against the
+named MetaMorpho ERC-4626 vault — only the `metaMorpho` constructor address
+differs.
 
 ### Operational roles
 
 | Role | Address | Notes |
 |---|---|---|
-| Owner / Treasury | [`0xEC4d3B6a39D61B85dF61cCb35CE693517992A98e`](https://etherscan.io/address/0xEC4d3B6a39D61B85dF61cCb35CE693517992A98e) | Gnosis Safe Multi-sig (same address on all 4 chains). Receives fee shares. |
-| Keeper | [`0x84c00eEdBb07C0782dE9758A75114Ee7194FA12c`](https://etherscan.io/address/0x84c00eEdBb07C0782dE9758A75114Ee7194FA12c) | Single EOA. Authorised to call `harvest` / `investToStrategy` / `divestFromStrategy` / `emergencyWithdraw` only. |
+| Owner / Treasury | [`0xEC4d3B6a39D61B85dF61cCb35CE693517992A98e`](https://etherscan.io/address/0xEC4d3B6a39D61B85dF61cCb35CE693517992A98e) | Gnosis Safe Multi-sig (same address on all 4 chains). Receives streaming-fee shares. |
+| Keeper | [`0x84c00eEdBb07C0782dE9758A75114Ee7194FA12c`](https://etherscan.io/address/0x84c00eEdBb07C0782dE9758A75114Ee7194FA12c) | Single EOA. Authorised to call `investToStrategy` / `divestFromStrategy` / `emergencyWithdraw` only. |
 | Guardian | [`0xD943214ECF438388ece5035855598010766Aaac1`](https://etherscan.io/address/0xD943214ECF438388ece5035855598010766Aaac1) | Single EOA. Authorised to call `pause()` only. |
-
-> **Verification tip**: call `Vault.VERSION_HASH()` on any of the 4 chains — must equal `0x06c015bd22b4c69690933c1058878ebdfef31f9aaae40bbe86d8a09fe1b2972c`. A different hash indicates a non-production deployment (e.g. internal `v1-dev` testbench).
 
 ---
 
-## Audit Status
+## Audit Scope
 
-This protocol has **not yet undergone external audit**. A formal solo audit is
-planned post-soft-launch.
+**In-scope** for solo audit:
 
-Until audit completion, the protocol operates with conservative deposit caps
-(see above) and a 3-role permission model designed to limit operator authority.
+```
+contracts/Vault.sol
+contracts/interfaces/IStrategy.sol
+contracts/strategies/BaseStrategy.sol
+contracts/strategies/AaveV3Strategy.sol
+contracts/strategies/CompoundV3Strategy.sol
+contracts/strategies/MorphoStrategy.sol
+contracts/strategies/VenusStrategy.sol
+contracts/strategies/FluidStrategy.sol
+contracts/libraries/Errors.sol
+```
 
-**Use at your own risk.** Report security issues to `support@apyee.com`.
+**Out-of-scope**: `contracts/mocks/`, `test/`, `scripts/`, `deployments/`,
+`contracts/interfaces/external/*` (external protocol interfaces re-declared
+locally — assumed to match the source protocol).
+
+External dependencies (audited separately):
+- OpenZeppelin Contracts 5.x (`ERC4626`, `Ownable`, `Pausable`,
+  `ReentrancyGuard`, `SafeERC20`, `Math`)
+- Aave V3 Pool · Compound V3 Comet · MetaMorpho ERC-4626 · Venus VToken ·
+  Fluid Lending — Vault interacts via the local interfaces under
+  `contracts/interfaces/external/`.
 
 ---
 
 ## Core Design
 
-- **Vault = Immutable** — no upgradeable proxy. Critical bugs require V2
+- **Vault = Immutable** — no upgradeable proxy. Critical bugs require V3
   redeploy + manual user migration (Yearn / Uniswap pattern).
 - **Strategy = Modular adapters** — only whitelisted Strategy contracts are
   callable from the Vault.
-- **Share Price fee model** — performance fee is minted to the Treasury as
-  shares; no USDC is moved out of the Vault.
+- **Streaming Share-Price fee model** — performance fee is **accrued
+  continuously** as the share price grows. On every `_deposit` / `_withdraw`
+  (and on `setFeeRate`), `_accrue()` mints fee shares to the Treasury based
+  on the elapsed share-price growth since the last accrue point. No USDC
+  ever leaves the Vault as fee.
 - **`MAX_FEE = 2000 bps (20%)` hardcoded** — cannot be exceeded.
-- **`MAX_ALLOCATION_BPS_ABSOLUTE = 4000 bps (40%)`** — absolute upper bound on
-  any single strategy's allocation.
+- **`MAX_ALLOCATION_BPS_ABSOLUTE`** — `immutable` constructor parameter.
+  See per-tier table above.
 - **3-Role separation**: Owner (Multi-sig) / Keeper (single EOA bot) /
   Guardian (single EOA, pause-only).
 - **`pause()` does not block user `withdraw()`** — invariant-tested.
 
-### Strategy adapters (Soft Launch v1.0.0 — 17 total)
+### V1 → V2 diff (summary)
 
-| Chain | Aave V3 | Compound V3 | Morpho | Spark | Venus | Kinza | Fluid |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| Ethereum | ✓ | ✓ | ✓ (Steakhouse) | ✓ | — | — | ✓ |
-| Base | ✓ | ✓ | ✓ (Moonwell) | — | — | — | ✓ |
-| Arbitrum | ✓ | ✓ | ✓ | — | — | — | ✓ |
-| BNB Chain | ✓ | — | — | — | ✓ | ✓ | ✓ |
-
-Per-strategy allocation cap: `MAX_ALLOCATION_BPS_ABSOLUTE = 4000 bps (40%)`. Spark / Kinza reuse `AaveV3Strategy.sol` (interface-compatible fork pools).
+| Area | V1 (`v1.0.0`) | V2 (`v2.0.0`) |
+|---|---|---|
+| Fee accrual | `harvest()` callable by Keeper | `_accrue()` hooks into deposit/withdraw, action-time |
+| Allocation cap | `constant 4000` | `immutable`, per-tier override (2500 / 4000 / 6000) |
+| Fee derivation | Strategy P&L (`lastRecordedBalance`) | Share-price growth (`lastSharePrice`) |
+| Surface area | Single Vault per chain | Per-tier × per-generation matrix from one source |
+| Removed | `harvest()`, `Harvested` event, `lastRecordedBalance` mapping, baseline bumping in `_invest` / `_divest` | — |
 
 ---
 
@@ -123,7 +162,7 @@ Per-strategy allocation cap: `MAX_ALLOCATION_BPS_ABSOLUTE = 4000 bps (40%)`. Spa
 | Role | Allowed | Disallowed |
 |---|---|---|
 | **Owner** (Multi-sig) | `addStrategy` / `removeStrategy` / `setFeeRate` / `setDepositCap` / `setDefaultUserCap` / `setUserCap` / `setKeeper` / `setGuardian` / `setTreasury` / `setStrategyMaxAllocation` | Funds movement — function does not exist |
-| **Keeper** (EOA bot) | `harvest` / `investToStrategy` / `divestFromStrategy` / `emergencyWithdraw` | Anything else |
+| **Keeper** (EOA bot) | `investToStrategy` / `divestFromStrategy` / `emergencyWithdraw` | Anything else |
 | **Guardian** (EOA) | `pause` | Anything else |
 
 `pause()` is reversible by the Owner. User `withdraw()` works while paused.
@@ -135,10 +174,9 @@ Per-strategy allocation cap: `MAX_ALLOCATION_BPS_ABSOLUTE = 4000 bps (40%)`. Spa
 | Constraint | Value | Where |
 |---|---|---|
 | Max performance fee | 2000 bps (20%) | `MAX_FEE` (constant) |
-| Single-strategy absolute cap | 4000 bps (40%) | `MAX_ALLOCATION_BPS_ABSOLUTE` |
-| Recommended idle ratio | ≥10% | `MIN_IDLE_BPS` (guideline) |
-| Auto-blacklist cooldown | 72h | `BLACKLIST_COOLDOWN` |
-| Soft Launch per-chain deposit cap | $500K USDC | Per-deploy, Owner-configurable |
+| Single-strategy absolute cap | per-tier (immutable) | `MAX_ALLOCATION_BPS_ABSOLUTE` |
+| Soft Launch per-chain deposit cap | $500K USDC (Conservative: $250K) | Per-deploy, Owner-configurable |
+| Default per-user deposit cap | $10K USDC | Owner-configurable per address |
 
 ---
 
@@ -149,19 +187,19 @@ npm install
 cp .env.example .env   # fill in RPC keys for fork tests
 
 npm run compile
-npm run test:unit          # unit tests (Vault: 100% statements / lines / funcs)
-npm run test:invariant     # 12 invariant scenarios
-npm run test:fork          # mainnet fork integration (Aave / Compound / Morpho)
-npm run test:fork:bsc      # BSC fork (Venus)
+npm run test:v2            # unit / invariant / adversarial / migration / completeness
+npm run test:v2:fork       # mainnet fork integration (Aave / Compound / Morpho / Fluid)
 npm run test:coverage
 ```
 
 ### Mainnet fork dry-run
 
 ```bash
-FORK=true FORK_CHAIN=ethereum npx hardhat node                 # in one terminal
-FORK_CHAIN=ethereum npx hardhat run scripts/deploy/01-deploy-vault.ts --network localhost
+FORK=true FORK_CHAIN=ethereum npx hardhat node             # in one terminal
+APYEE_GENERATION=v2-prod APYEE_TIER=balanced \
+  FORK_CHAIN=ethereum npx hardhat run scripts/deploy/v2/01-deploy-vault.ts --network localhost
 # 02 → 03 → 04 same pattern; FORK_CHAIN=base|arbitrum|bsc to switch chains
+# APYEE_TIER=aggressive for the Base aggressive tier
 ```
 
 ---
@@ -170,29 +208,33 @@ FORK_CHAIN=ethereum npx hardhat run scripts/deploy/01-deploy-vault.ts --network 
 
 ```
 contracts/
-├── Vault.sol                       # ERC-4626 Vault (immutable)
-├── interfaces/IStrategy.sol
+├── Vault.sol                       # ERC-4626 VaultV2 (immutable, streaming fee)
+├── interfaces/
+│   ├── IStrategy.sol
+│   └── external/                   # external protocol interfaces (out-of-scope)
 ├── strategies/
 │   ├── BaseStrategy.sol            # shared permissions + reentrancy
-│   ├── AaveV3Strategy.sol          # Aave V3 Pool + aToken
+│   ├── AaveV3Strategy.sol          # Aave V3 Pool + aToken (Spark / Kinza fork-compatible)
 │   ├── CompoundV3Strategy.sol      # Comet single-market
 │   ├── MorphoStrategy.sol          # MetaMorpho ERC-4626 wrapper
 │   ├── VenusStrategy.sol           # Compound V2 fork (BSC)
 │   └── FluidStrategy.sol           # Fluid Lending
 ├── libraries/Errors.sol            # custom errors
-└── mocks/                          # test-only mocks
+└── mocks/                          # test-only mocks (out-of-scope)
 test/
-├── unit/                           # unit tests
-├── invariant/                      # 12 invariant scenarios
-├── integration/                    # mainnet fork tests
-└── fixtures/
+├── v2/                             # V2 unit, invariant, adversarial, migration, completeness
+└── fixtures/deployVaultV2.ts
 scripts/
-└── deploy/
-    ├── 00-config.ts                # per-chain USDC + protocol addresses
-    ├── 01-deploy-vault.ts
-    ├── 02-deploy-strategies.ts
-    ├── 03-register-strategies.ts
-    └── 04-transfer-ownership.ts
+├── deploy/
+│   ├── 00-config.ts                # per-chain USDC + protocol addresses
+│   └── v2/
+│       ├── 00-tier-config.ts       # tier matrix + version hashes
+│       ├── 01-deploy-vault.ts
+│       ├── 02-deploy-strategies.ts
+│       ├── 03-register-strategies.ts
+│       └── 04-transfer-ownership.ts
+├── utils/                          # env / deployment record / source-tag helpers
+└── ops/verify.ts                   # post-deploy explorer verification
 ```
 
 ---
@@ -206,6 +248,9 @@ scripts/
 - `SafeERC20` for all token transfers.
 - ERC-4626 inflation-attack mitigation via decimals offset (OpenZeppelin v5).
 - `totalAssets()` == sum of strategy balances + idle (invariant).
+- Share price is monotonic non-decreasing between accrue points (invariant).
+- `_accrue()` mints fee shares to Treasury proportional to share-price growth,
+  bounded by `MAX_FEE`.
 
 ---
 
@@ -217,7 +262,7 @@ scripts/
 - **Security policy**: [SECURITY.md](SECURITY.md)
 - **Code of conduct**: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 - **Contributing**: [CONTRIBUTING.md](CONTRIBUTING.md)
-- **Machine-readable addresses**: [deployments/v1-prod.json](deployments/v1-prod.json)
+- **Machine-readable addresses**: [deployments/v2-prod/](deployments/v2-prod/)
 
 ---
 

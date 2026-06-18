@@ -17,7 +17,16 @@ export interface DeploymentRecord {
   deployer: string;
   contracts: {
     vault?: string;
+    /// Address-only map (key → deployed strategy contract address). Backward compatible —
+    /// every generation (v0-dev / v1-* / v2-*) populates this.
     strategies?: Record<string, string>;
+    /// Canonical naming metadata per strategy key (key → {slug, display}). Added 2026-06-17
+    /// to anchor the user-facing label in the deployment evidence — prevents stale labels
+    /// (Steakhouse → Smokehouse, Portofino → Pangolins, Usual Boosted → Pangolins) from
+    /// cascading from the contract layer to server / frontend. Server MUST read `slug` /
+    /// `display` from here rather than re-deriving from internal keys.
+    /// V2-prod (2026-06-17 onward) populates this. Earlier records omit (optional).
+    strategyMeta?: Record<string, { slug: string; display: string }>;
   };
   config: {
     asset: string;
@@ -32,6 +41,12 @@ export interface DeploymentRecord {
     defaultUserCap?: string; // optional for legacy v0-dev records; required from v1.0.0 prod
     version?: string; // optional for legacy v0-dev records; human-readable ("1.0.0" / "1.0.0-dev")
     versionHash?: string; // optional for legacy v0-dev records; keccak256(version) bytes32 (0x...) — used by verify
+    // V2 only — Vault.constructor InitConfig.maxAllocationAbsolute (per-tier immutable cap, bps).
+    // V1 omits (constant 4000 lives in the bytecode).
+    maxAllocationAbsolute?: number;
+    // V2 only — tier label ("conservative" / "balanced" / "aggressive"). Drives the V2 verify
+    // path and matches the on-chain VERSION_HASH suffix.
+    tier?: string;
   };
   ownershipTransferred?: {
     to: string;
@@ -42,12 +57,14 @@ export interface DeploymentRecord {
 
 const DEPLOYMENTS_DIR = path.join(__dirname, "..", "..", "deployments");
 
-/// Resolve the active deployment generation (e.g. "v1-prod", "v1-dev", "v0-dev").
+/// Resolve the active deployment generation (e.g. "v2-prod", "v2-dev", "v1-prod", "v1-dev", "v0-dev").
 /// Priority: env `APYEE_GENERATION` > `deployments/_generation` pointer file > legacy flat (empty).
 ///
 /// Returns "" for legacy (current mainnet files at `deployments/<network>.json`).
 /// Returns "v1-prod" / "v1-dev" / etc. for generation-aware deploys, in which case files live at
 /// `deployments/<generation>/<network>.json`. SPEC 1.22 Runbook.
+/// For v2-* generations, files live at `deployments/<generation>/<tier>/<network>.json`
+/// (additional tier dimension — see APYEE_TIER + V2_VAULT.md §4.3).
 export function getGeneration(): string {
   const env = process.env.APYEE_GENERATION?.trim();
   if (env) return env;
@@ -56,9 +73,26 @@ export function getGeneration(): string {
   return "";
 }
 
+/// Resolve the active tier (V2 only — "conservative" / "balanced" / "aggressive").
+/// Returns "" if not set. V2 deploys must set this; V1 deploys ignore it.
+export function getTier(): string {
+  return process.env.APYEE_TIER?.trim() ?? "";
+}
+
 function generationDir(): string {
   const gen = getGeneration();
-  return gen ? path.join(DEPLOYMENTS_DIR, gen) : DEPLOYMENTS_DIR;
+  if (!gen) return DEPLOYMENTS_DIR;
+  if (gen.startsWith("v2-")) {
+    const tier = getTier();
+    if (!tier) {
+      throw new Error(
+        `Generation "${gen}" requires APYEE_TIER. ` +
+          `Set APYEE_TIER to one of conservative / balanced / aggressive.`,
+      );
+    }
+    return path.join(DEPLOYMENTS_DIR, gen, tier);
+  }
+  return path.join(DEPLOYMENTS_DIR, gen);
 }
 
 function ensureDir() {
@@ -98,11 +132,16 @@ export function loadDeployment(networkName: string): DeploymentRecord | undefine
 export function saveDeployment(record: DeploymentRecord) {
   ensureDir();
   // Strip any legacy top-level strategy slots before write — strategies map is canonical.
+  // Preserve strategyMeta (added 2026-06-17 for canonical naming evidence — see [[1]] in
+  // DeploymentRecord). Earlier this cleaned-spread silently dropped strategyMeta whenever
+  // updateDeployment was called by step 04-transfer-ownership.ts → mainnet + arbitrum
+  // v2-prod records lost strategyMeta and frontend slug mapping went stale (2026-06-18 incident).
   const cleaned: DeploymentRecord = {
     ...record,
     contracts: {
       vault: record.contracts.vault,
       strategies: record.contracts.strategies ?? {},
+      ...(record.contracts.strategyMeta ? { strategyMeta: record.contracts.strategyMeta } : {}),
     },
   };
   fs.writeFileSync(deploymentPath(record.network), JSON.stringify(cleaned, null, 2));

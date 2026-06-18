@@ -32,8 +32,49 @@ function optionalAddress(envKey: string): string | undefined {
   return ethers.getAddress(v);
 }
 
+/// Resolve the Keeper EOA address for the active deployment generation.
+/// - `APYEE_GENERATION=v1-prod` / `v2-prod` → `KEEPER_ADDRESS_PROD`
+/// - other / unset                          → `KEEPER_ADDRESS_DEV`
+/// - legacy fallback                        → `KEEPER_ADDRESS` (pre-split .env files)
+///
+/// dev / prod 를 분리한 이유: prod (v1-prod, v2-prod) 는 실 유저 자금 다루므로 dev smoke /
+/// v0-dev cleanup 과 키 격리 권장 (운영 보안). 동일 EOA 재사용 가능하나 권장 안 함.
+function isProdGeneration(gen: string): boolean {
+  return gen === "v1-prod" || gen === "v2-prod";
+}
+
+export function keeperAddressForGeneration(): string {
+  const gen = process.env.APYEE_GENERATION ?? "";
+  const primary = isProdGeneration(gen) ? "KEEPER_ADDRESS_PROD" : "KEEPER_ADDRESS_DEV";
+  const v = process.env[primary] || process.env.KEEPER_ADDRESS;
+  if (!v) {
+    throw new Error(
+      `Missing env: ${primary} (or legacy KEEPER_ADDRESS). APYEE_GENERATION="${gen}"`,
+    );
+  }
+  if (!ethers.isAddress(v)) {
+    throw new Error(`Invalid keeper address for generation "${gen}": ${v}`);
+  }
+  return ethers.getAddress(v);
+}
+
+/// Same generation split for the private key. Required by ops scripts that need to
+/// broadcast keeper-only tx (smoke / divest / harvest dry-runs).
+export function keeperPrivateKeyForGeneration(): string {
+  const gen = process.env.APYEE_GENERATION ?? "";
+  const primary = isProdGeneration(gen) ? "KEEPER_PRIVATE_KEY_PROD" : "KEEPER_PRIVATE_KEY_DEV";
+  const v = process.env[primary] || process.env.KEEPER_PRIVATE_KEY;
+  if (!v) {
+    throw new Error(
+      `Missing env: ${primary} (or legacy KEEPER_PRIVATE_KEY). APYEE_GENERATION="${gen}"`,
+    );
+  }
+  return v;
+}
+
 /// Read deployment roles for `networkName`. Each chain has its own `MULTISIG_<NETWORK>`
-/// and (optionally) `TREASURY_<NETWORK>`; keeper/guardian are global single EOAs.
+/// and (optionally) `TREASURY_<NETWORK>`; keeper resolves via `keeperAddressForGeneration()`
+/// (dev/prod split); guardian is a global single EOA.
 /// For dry-runs (network = localhost / hardhat), resolve via the same DRY_RUN_FORK_TARGET /
 /// FORK_CHAIN cascade as 00-config.ts so the right MULTISIG_<TARGET> is read.
 export function readRoles(networkName: string): DeploymentRoles {
@@ -44,7 +85,7 @@ export function readRoles(networkName: string): DeploymentRoles {
   const upper = targetName.toUpperCase().replace(/-/g, "_");
 
   const multisig = requireAddress(`MULTISIG_${upper}`);
-  const keeper = requireAddress("KEEPER_ADDRESS");
+  const keeper = keeperAddressForGeneration();
   const guardian = requireAddress("GUARDIAN_ADDRESS");
   const treasury = optionalAddress(`TREASURY_${upper}`) ?? multisig;
 
@@ -53,13 +94,14 @@ export function readRoles(networkName: string): DeploymentRoles {
 
 /// Per-chain minimum balance before the deploy script proceeds. L1 (Ethereum) needs the most
 /// because 4-step deploy = ~8M gas → at 30 gwei that's ~0.24 ETH. L2 (Base/Arbitrum) settle
-/// most fees at <1 gwei so 0.005 ETH covers the same workload with safety margin. BSC mirrors
-/// L1 thresholds — gas price is low but BNB volatility justifies the buffer.
+/// most fees at <1 gwei so 0.005 ETH covers the same workload with safety margin.
+/// BSC: 가스 비용 8M × 0.05 gwei ≈ 0.0004 BNB. 0.02 BNB = 50× 여유 (이전 0.05 는 100× +
+/// BNB 변동성 버퍼 였으나 dev 환경엔 과보수적 — 2026-06-09 조정).
 const MIN_BALANCE_BY_CHAIN: Record<string, string> = {
   mainnet: "0.05",
   base: "0.005",
   arbitrum: "0.005",
-  bsc: "0.05",
+  bsc: "0.02",
   // localhost / hardhat fork: 0.05 fallback (we hardhat_setBalance to 10000 ETH anyway)
   localhost: "0.05",
   hardhat: "0.05",

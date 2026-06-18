@@ -1,0 +1,42 @@
+{
+  "network": "bsc",
+  "chainId": 56,
+  "timestamp": "2026-06-17T23:43:02.986Z",
+  "deployer": "0xD943214ECF438388ece5035855598010766Aaac1",
+  "contracts": {
+    "vault": "0x0e5102ecd1cb960eC62659DFA8Fa9a8349a777fD",
+    "strategies": {
+      "aave": "0x3b2dbaaC947c8Eaa50479068CDBd590135a49F14",
+      "fluid": "0xADF2D09103ee75c149ba17c3389f2FeA090829c6",
+      "kinza": "0x0d4F48ABfb16D0865F027a34c8c9dd209F0857c4",
+      "venus": "0x059e6697C38b73acbf8759f1140F95A5F20ebB7a"
+    },
+    "strategyMeta": {
+      "aave": { "slug": "aave-v3", "display": "Aave V3" },
+      "fluid": { "slug": "fluid", "display": "Fluid" },
+      "kinza": { "slug": "kinza", "display": "Kinza" },
+      "venus": { "slug": "venus", "display": "Venus" }
+    }
+  },
+  "config": {
+    "asset": "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d",
+    "name": "Apyee USDC Vault V2 (Balanced)",
+    "symbol": "apUSDC-b",
+    "initialOwner": "0xD943214ECF438388ece5035855598010766Aaac1",
+    "keeper": "0x84c00eEdBb07C0782dE9758A75114Ee7194FA12c",
+    "guardian": "0xD943214ECF438388ece5035855598010766Aaac1",
+    "treasury": "0xEC4d3B6a39D61B85dF61cCb35CE693517992A98e",
+    "feeRateBps": 1500,
+    "depositCap": "500000000000000000000000",
+    "defaultUserCap": "10000000000000000000000",
+    "version": "2.0.0-prod-balanced",
+    "versionHash": "0xfdb55585a303e75f7a4789857f4098cb223dc75837bbb8578ac57d0410e2d833",
+    "maxAllocationAbsolute": 4000,
+    "tier": "balanced"
+  },
+  "ownershipTransferred": {
+    "to": "0xEC4d3B6a39D61B85dF61cCb35CE693517992A98e",
+    "txHash": "0x6f1ec79edb886cec576c3afb539c3117b91a84f5b13648adfcac88e670101776",
+    "blockNumber": 104848439
+  }
+}

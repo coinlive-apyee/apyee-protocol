@@ -25,6 +25,15 @@ interface BaseStrategyEntry {
   targetBps: number;
   /// Per-strategy hard cap (must satisfy MAX_ALLOCATION_BPS_ABSOLUTE = 4000 in Vault.sol).
   maxBps: number;
+  /// Canonical user-facing display name. Single source of truth — server / frontend MUST
+  /// derive labels from here (via deployment JSON's strategyMeta) to prevent stale labels
+  /// like "Steakhouse USDC" (was rebranded to "Smokehouse USDC") / "Portofino" (memo error;
+  /// real curator is Pangolins) / "Usual Boosted USDC" (server-side mislabel) recurring.
+  /// See SPEC 1.28.3 + memory_v2_prod_naming_canonical (2026-06-17).
+  display: string;
+  /// Server slug — kebab-case of display name. Used for /api/strategy/* routes + frontend
+  /// activity URLs. Must match server's `getStrategyActivitySlug(vaultStrategyName)` output.
+  slug: string;
 }
 
 export interface AaveStrategyEntry extends BaseStrategyEntry {
@@ -85,9 +94,27 @@ const VAULT_DEFAULTS = {
   name: "Apyee USDC Vault",
   symbol: "apUSDC",
   feeRateBps: 1500, // 15%
-  depositCapHuman: "10000",      // Soft Launch vault total cap = $10K (1.21.4)
+  depositCapHuman: "10000",      // Beta default. Per-generation override via depositCapForGeneration().
   defaultUserCapHuman: "10000",  // Soft Launch per-user Free cap = $10K (1.21.4)
 } as const;
+
+/// Per-generation vault total cap (depositCap). SPEC 1.21.4 staged cap table.
+/// - v1-dev:  $100K (dev dry-test sweet spot — wide enough for ops scenarios)
+/// - v1-prod: $500K (Soft Launch — 50 users × $10K Free cap)
+/// - other:   $10K (Beta default fallback)
+///
+/// Used by 01-deploy-vault.ts at construction time. Per-user cap (defaultUserCap)
+/// stays at $10K for both generations — only total cap differs.
+export function depositCapForGeneration(generation: string): string {
+  switch (generation) {
+    case "v1-prod":
+      return "500000";
+    case "v1-dev":
+      return "100000";
+    default:
+      return VAULT_DEFAULTS.depositCapHuman;
+  }
+}
 
 /// Generation → version string mapping. Used by 01-deploy-vault.ts + 02-deploy-strategies.ts
 /// to set Vault.VERSION_HASH + BaseStrategy.STRATEGY_VERSION_HASH at deploy time. SPEC 1.22.
@@ -136,19 +163,33 @@ export const CHAINS: Record<string, ChainConfig> = {
         adapter: "AaveV3Strategy",
         pool: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
         aUsdc: "0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c",
+        display: "Aave V3",
+        slug: "aave-v3",
         targetBps: 3000,
         maxBps: 4000,
       },
       compound: {
         adapter: "CompoundV3Strategy",
         comet: "0xc3d688B66703497DAA19211EEdff47f25384cdc3",
+        display: "Compound V3",
+        slug: "compound-v3",
         targetBps: 2500,
         maxBps: 4000,
       },
       morpho: {
         adapter: "MorphoStrategy",
-        // Steakhouse USDC (curated MetaMorpho, lowercase to skip strict EIP-55 in addStrategy).
+        // Smokehouse USDC (bbqUSDC) — Steakhouse Financial 큐레이터 (Base steakUSDC vanilla +
+        // Steakhouse Prime 와 동일 multisig 0x827e86...AdeCdB). V1 prod 배포 시점 (2026-05-07,
+        // commit fbf03b3) 에는 vault 명칭이 "Steakhouse USDC" 였으나 이후 Steakhouse Financial
+        // 이 라인업 확장하면서 본 vault 를 고수익 변종으로 분리 + "Smokehouse USDC / bbqUSDC"
+        // 로 리브랜드. on-chain name 직접 검증 (2026-06-17, scripts/ops/check-morpho-name.ts).
+        // 큐레이터 노출: mainnet Smokehouse (본 슬롯) + Base aggressive 의 steakUSDC vanilla +
+        // Steakhouse Prime = Steakhouse Financial multisig 운영 3 vault. 단 vault 단위 분리
+        // (서로 다른 immutable Vault, 다른 user pool, 종목 cap 별도 적용) 라 단일 Vault 집중
+        // 없음. SPEC.md 1.28.3 격리 주석 참조. Lowercase 는 strict EIP-55 skip.
         metaMorpho: "0xbeefff209270748ddd194831b3fa287a5386f5bc",
+        display: "Smokehouse USDC",
+        slug: "smokehouse-usdc",
         targetBps: 2000,
         maxBps: 4000,
       },
@@ -158,6 +199,8 @@ export const CHAINS: Record<string, ChainConfig> = {
         adapter: "AaveV3Strategy",
         pool: "0xC13e21B648A5Ee794902342038FF3aDAB66BE987",
         aUsdc: "0x377C3bd93f2a2984E1E7bE6A5C22c525eD4A4815", // spUSDC, 6 dec
+        display: "Spark",
+        slug: "spark",
         targetBps: 1500,
         maxBps: 4000,
       },
@@ -166,6 +209,8 @@ export const CHAINS: Record<string, ChainConfig> = {
       fluid: {
         adapter: "FluidStrategy",
         fluidVault: "0x9Fb7b4477576Fe5B32be4C1843aFB1e55F251B33", // fUSDC, 6 dec
+        display: "Fluid",
+        slug: "fluid",
         targetBps: 1500,
         maxBps: 4000,
       },
@@ -183,12 +228,16 @@ export const CHAINS: Record<string, ChainConfig> = {
         adapter: "AaveV3Strategy",
         pool: "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5",
         aUsdc: "0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB",
+        display: "Aave V3",
+        slug: "aave-v3",
         targetBps: 3000,
         maxBps: 4000,
       },
       compound: {
         adapter: "CompoundV3Strategy",
         comet: "0xb125E6687d4313864e53df431d5425969c15Eb2F",
+        display: "Compound V3",
+        slug: "compound-v3",
         targetBps: 2500,
         maxBps: 4000,
       },
@@ -197,6 +246,8 @@ export const CHAINS: Record<string, ChainConfig> = {
       morpho: {
         adapter: "MorphoStrategy",
         metaMorpho: "0xc1256ae5ff1cf2719d4937adb3bbccab2e00a2ca",
+        display: "Moonwell Flagship USDC",
+        slug: "moonwell-flagship-usdc",
         targetBps: 2000,
         maxBps: 4000,
       },
@@ -204,9 +255,66 @@ export const CHAINS: Record<string, ChainConfig> = {
       fluid: {
         adapter: "FluidStrategy",
         fluidVault: "0xf42f5795D9ac7e9D757dB633D693cD548Cfd9169", // fUSDC, 6 dec
+        display: "Fluid",
+        slug: "fluid",
         targetBps: 1500,
         maxBps: 4000,
       },
+
+      // ─── B4: aggressive 티어 전용 (SPEC 1.28.3) ───
+      // 4 entries 모두 MetaMorpho 큐레이티드 USDC vaults on Base. 어댑터 재사용
+      // (MorphoStrategy), 신규 .sol 없음. tier-config 의 strategiesForTier 가 tier 별
+      // maxBps 를 클램프하므로 여기 maxBps 4000 은 balanced 컨텍스트용 (aggressive 면
+      // 6000 으로 자동 상향). 풀 주소 / 큐레이터 매핑 검증: 트랙 B 단일 출처 +
+      // Morpho 공식 GraphQL API + Base RPC asset()/MORPHO() 직접 호출 (2026-06-09).
+
+      // GTUSDCP — Gauntlet USDC Prime (Gauntlet 큐레이터). TVL $440M, B4 중 최대.
+      // 백엔드 B-grade scan candidate poolId 8: e0672197 (2026-06-09).
+      gtusdcp: {
+        adapter: "MorphoStrategy",
+        metaMorpho: "0xee8f4ec5672f09119b96ab6fb59c27e1b7e44b61",
+        display: "Gauntlet USDC Prime",
+        slug: "gauntlet-usdc-prime",
+        targetBps: 1500,
+        maxBps: 4000,
+      },
+      // STEAKUSDC — Steakhouse USDC vanilla flagship (Steakhouse Financial 큐레이터).
+      // TVL $288M. 백엔드 B-grade scan candidate poolId 8: 81ae8812 (인센트 8%, MDD -50.2%).
+      steakusdc: {
+        adapter: "MorphoStrategy",
+        metaMorpho: "0xbeef010f9cb27031ad51e3333f9af9c6b1228183",
+        display: "Steakhouse USDC",
+        slug: "steakhouse-usdc",
+        targetBps: 1500,
+        maxBps: 4000,
+      },
+      // STEAKPRIME — Steakhouse Prime USDC (Steakhouse Financial 동일 multisig 가 운영
+      // 하는 별도 line, vanilla 와 owner/curator 일치). TVL $335M, MDD -56.1%, organic.
+      // 큐레이터 의존도 ↑ 위험 있으나 risk-adjusted 정상. 백엔드 B-grade scan candidate
+      // poolId 8: 7820bd3c. 2026-06-09 B-grade scan 결과 B4 슬롯 신규 추가 (bbqusdc 교체).
+      steakprime: {
+        adapter: "MorphoStrategy",
+        metaMorpho: "0xbeefe94c8ad530842bfe7d8b397938ffc1cb83b2",
+        display: "Steakhouse Prime USDC",
+        slug: "steakhouse-prime-usdc",
+        targetBps: 1500,
+        maxBps: 4000,
+      },
+      // PUSDC — Pangolins USDC (Pangolins 큐레이터). SPEC 1.28.3 의 "Portofino" 표기는
+      // 메모 오류 — Morpho 에 Portofino 큐레이터 실존 안 함. sym=pUSDC 의 실제 큐레이터
+      // 는 Pangolins. TVL $30M, MDD -38.9% (B4 중 최저). 백엔드 scan candidate: c1949c46.
+      pusdc: {
+        adapter: "MorphoStrategy",
+        metaMorpho: "0x1401d1271c47648ac70cbcdfa3776d4a87ce006b",
+        display: "Pangolins USDC",
+        slug: "pangolins-usdc",
+        targetBps: 1500,
+        maxBps: 4000,
+      },
+      // NOTE: 이전 B4 슬롯의 `bbqusdc` (Steakhouse High Yield USDC v1.1,
+      // 0xBEEFA7B88064FeEF0cEe02AAeBBd95D30df3878F, TVL $3.78M) 는 2026-06-09 B-grade
+      // scan candidates 임계 (유동성/TVL) 에서 빠짐 → 동일 큐레이터(Steakhouse Financial)
+      // 의 더 큰 TVL 별트 steakprime 으로 교체.
     },
     vault: { ...VAULT_DEFAULTS },
   },
@@ -221,12 +329,16 @@ export const CHAINS: Record<string, ChainConfig> = {
         adapter: "AaveV3Strategy",
         pool: "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
         aUsdc: "0x724dc807b04555b71ed48a6896b6F41593b8C637",
+        display: "Aave V3",
+        slug: "aave-v3",
         targetBps: 3000,
         maxBps: 4000,
       },
       compound: {
         adapter: "CompoundV3Strategy",
         comet: "0x9c4ec768c28520B50860ea7a15bd7213a9fF58bf",
+        display: "Compound V3",
+        slug: "compound-v3",
         targetBps: 2500,
         maxBps: 4000,
       },
@@ -235,6 +347,8 @@ export const CHAINS: Record<string, ChainConfig> = {
       morpho: {
         adapter: "MorphoStrategy",
         metaMorpho: "0x7c574174da4b2be3f705c6244b4bfa0815a8b3ed",
+        display: "Gauntlet USDC Prime",
+        slug: "gauntlet-usdc-prime",
         targetBps: 2000,
         maxBps: 4000,
       },
@@ -242,6 +356,8 @@ export const CHAINS: Record<string, ChainConfig> = {
       fluid: {
         adapter: "FluidStrategy",
         fluidVault: "0x1A996cb54bb95462040408C06122D45D6Cdb6096", // fUSDC, 6 dec
+        display: "Fluid",
+        slug: "fluid",
         targetBps: 1500,
         maxBps: 4000,
       },
@@ -259,6 +375,8 @@ export const CHAINS: Record<string, ChainConfig> = {
       venus: {
         adapter: "VenusStrategy",
         vUsdc: "0xeca88125a5adbe82614ffc12d0db554e2e2867c8",
+        display: "Venus",
+        slug: "venus",
         targetBps: 3000,
         maxBps: 4000,
       },
@@ -269,6 +387,8 @@ export const CHAINS: Record<string, ChainConfig> = {
         adapter: "AaveV3Strategy",
         pool: "0x6807dc923806fE8Fd134338EABCA509979a7e0cB",
         aUsdc: "0x00901a076785e0906d1028c7d6372d247bec7d61", // aBnbUSDC, 18 dec
+        display: "Aave V3",
+        slug: "aave-v3",
         targetBps: 3000,
         maxBps: 4000,
       },
@@ -279,6 +399,8 @@ export const CHAINS: Record<string, ChainConfig> = {
         adapter: "AaveV3Strategy",
         pool: "0xcb0620b181140e57d1c0d8b724cde623ca963c8c",
         aUsdc: "0x26c8c9d74eAe6182316B30dE9ac60e2AdC9F4a04", // kUSDC, 18 dec
+        display: "Kinza",
+        slug: "kinza",
         targetBps: 1500,
         maxBps: 4000,
       },
@@ -289,6 +411,8 @@ export const CHAINS: Record<string, ChainConfig> = {
       fluid: {
         adapter: "FluidStrategy",
         fluidVault: "0xfE60462E93cee34319F48Cfc6AcFbc13c2882Df9", // fUSDC, 18 dec
+        display: "Fluid",
+        slug: "fluid",
         targetBps: 1500,
         maxBps: 4000,
       },

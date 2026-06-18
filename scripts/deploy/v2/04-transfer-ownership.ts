@@ -1,30 +1,33 @@
 import { ethers, network } from "hardhat";
 
-import { readRoles } from "../utils/env";
-import { loadDeployment, updateDeployment } from "../utils/deployments";
+import { requireTier } from "./00-tier-config";
+import { readRoles } from "../../utils/env";
+import { loadDeployment, updateDeployment } from "../../utils/deployments";
 
-/// Step 4: Transfer Vault ownership from the deployer EOA to the Multi-sig (Gnosis Safe).
-/// THIS IS IRREVERSIBLE without Multi-sig cooperation. Run only AFTER:
-///   - 01-deploy-vault
-///   - 02-deploy-strategies
-///   - 03-register-strategies
-/// All Owner-only operations (addStrategy / setFeeRate / setDepositCap / unblacklistStrategy /
-/// setKeeper / setGuardian / setTreasury) will require Safe signatures from this point.
+/// V2 Step 4: Transfer VaultV2 ownership from the deployer EOA to the Multi-sig (Gnosis Safe).
+/// IRREVERSIBLE without Multi-sig cooperation. Run only AFTER 01 → 02 → 03.
+///
+/// Same flow as V1 04-transfer-ownership. Difference: loads VaultV2 (not Vault) and
+/// records the tier in `deployments/v2-<env>/<tier>/<chain>.json` via the active path
+/// resolver (deployments.ts auto-prefixes by APYEE_GENERATION + APYEE_TIER).
 
 async function main() {
   const roles = readRoles(network.name);
   const record = loadDeployment(network.name);
+  const tier = requireTier();
 
   if (!record?.contracts.vault) {
-    throw new Error(`No Vault for ${network.name}. Run 01-deploy-vault first.`);
+    throw new Error(
+      `No VaultV2 for ${network.name} / ${tier}. Run v2/01-deploy-vault first.`,
+    );
   }
 
   const [deployer] = await ethers.getSigners();
-  const vault = await ethers.getContractAt("Vault", record.contracts.vault);
+  const vault = await ethers.getContractAt("VaultV2", record.contracts.vault);
 
   const currentOwner = await vault.owner();
   console.log("─────────────────────────────────────────────");
-  console.log(`Transferring ownership on ${network.name}`);
+  console.log(`Transferring ownership on ${network.name} (${tier})`);
   console.log(`Vault:           ${record.contracts.vault}`);
   console.log(`Current owner:   ${currentOwner}`);
   console.log(`New owner (MS):  ${roles.multisig}`);
@@ -60,9 +63,7 @@ async function main() {
 
   console.log(`✓ tx ${receipt!.hash} (block ${receipt!.blockNumber})`);
 
-  // Some public RPCs (e.g. Base mainnet.base.org) have read-after-write lag where a follow-up
-  // owner() call returns stale state for several seconds even after the tx is confirmed in a
-  // block. Poll up to 30s before declaring a real mismatch.
+  // Read-after-write lag tolerance (same pattern as V1 04 — Base mainnet RPC quirk).
   let newOwner = "";
   for (let attempt = 0; attempt < 6; attempt++) {
     newOwner = await vault.owner();
@@ -86,9 +87,9 @@ async function main() {
     };
   });
 
-  console.log(`\n✓ Saved to deployments/${network.name}.json`);
+  console.log(`\n✓ Saved deployment record.`);
   console.log(
-    "\nDeploy complete. Owner-only operations from now on require Multi-sig signatures.",
+    "\nV2 deploy complete. Owner-only operations from now on require Multi-sig signatures.",
   );
 }
 

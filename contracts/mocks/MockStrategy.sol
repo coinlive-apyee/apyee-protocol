@@ -9,6 +9,9 @@ contract MockStrategy is BaseStrategy {
     uint256 private _principal;
     uint256 private _harvestable;
     uint256 private _apy;
+    /// @notice When true, `_withdraw` reverts — simulates V1 BSC Venus dust scenario
+    ///         where the underlying protocol rounds to zero and reverts.
+    bool public revertOnWithdraw;
 
     constructor(address vault_, address asset_)
         BaseStrategy(vault_, asset_, keccak256(abi.encodePacked("mock")))
@@ -23,6 +26,7 @@ contract MockStrategy is BaseStrategy {
     }
 
     function _withdraw(uint256 amount) internal override returns (uint256 withdrawn) {
+        if (revertOnWithdraw) revert("MockStrategy: forced revert");
         withdrawn = amount > _principal ? _principal : amount;
         _principal -= withdrawn;
     }
@@ -59,5 +63,10 @@ contract MockStrategy is BaseStrategy {
     /// @notice Adjust mock APY for testing.
     function setAPY(uint256 newApy) external {
         _apy = newApy;
+    }
+
+    /// @notice Toggle forced revert on `_withdraw` — simulates dust / protocol unavailability.
+    function setRevertOnWithdraw(bool v) external {
+        revertOnWithdraw = v;
     }
 }
