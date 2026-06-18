@@ -1,0 +1,39 @@
+diff --git a/node_modules/ethers/lib.commonjs/providers/format.js b/node_modules/ethers/lib.commonjs/providers/format.js
+index a6701b8..ab5e323 100644
+--- a/node_modules/ethers/lib.commonjs/providers/format.js
++++ b/node_modules/ethers/lib.commonjs/providers/format.js
+@@ -181,10 +181,15 @@ const _formatTransactionReceipt = object({
+     index: ["transactionIndex"],
+ });
+ function formatTransactionReceipt(value) {
++    // PATCH: normalize to:"" → null (CREATE tx receipt from some RPCs)
++    if (value && value.to === "") { value.to = null; }
+     return _formatTransactionReceipt(value);
+ }
+ exports.formatTransactionReceipt = formatTransactionReceipt;
+ function formatTransactionResponse(value) {
++    // PATCH: some RPCs (Alchemy/publicnode/etc) return to: "" for CREATE tx instead of null.
++    // Convert empty string to null so allowNull(getAddress) handles it properly.
++    if (value.to === "") { value.to = null; }
+     // Some clients (TestRPC) do strange things like return 0x0 for the
+     // 0 address; correct this to be a real address
+     if (value.to && (0, index_js_4.getBigInt)(value.to) === BN_0) {
+diff --git a/node_modules/ethers/lib.esm/providers/format.js b/node_modules/ethers/lib.esm/providers/format.js
+index 781ce4a..d6c4368 100644
+--- a/node_modules/ethers/lib.esm/providers/format.js
++++ b/node_modules/ethers/lib.esm/providers/format.js
+@@ -168,9 +168,14 @@ const _formatTransactionReceipt = object({
+     index: ["transactionIndex"],
+ });
+ export function formatTransactionReceipt(value) {
++    // PATCH: normalize to:"" → null (CREATE tx receipt from some RPCs)
++    if (value && value.to === "") { value.to = null; }
+     return _formatTransactionReceipt(value);
+ }
+ export function formatTransactionResponse(value) {
++    // PATCH: some RPCs (Alchemy/publicnode/etc) return to: "" for CREATE tx instead of null.
++    // Convert empty string to null so allowNull(getAddress) handles it properly.
++    if (value.to === "") { value.to = null; }
+     // Some clients (TestRPC) do strange things like return 0x0 for the
+     // 0 address; correct this to be a real address
+     if (value.to && getBigInt(value.to) === BN_0) {
