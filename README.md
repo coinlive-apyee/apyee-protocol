@@ -11,19 +11,40 @@ paths do not exist.
 
 ---
 
-## Status — V2 Soft Launch (v2.0.0, 2026-06)
+## Status — Soft Launch (v2.0.0, 2026-06)
 
 V2 introduces a **streaming performance fee** and a **tier-based allocation
-cap** so a single audited Solidity source can produce multiple deployment
-configs (Conservative / Balanced / Aggressive). Phase 1 launches Balanced on
-all 4 chains plus Aggressive on Base.
+cap** so a single Solidity source can produce multiple deployment configs
+(Conservative / Balanced / Aggressive). Phase 1 launches Balanced on all 4
+chains plus Aggressive on Base.
+
+### What's verified
+
+| Layer | Status | Evidence |
+|---|---|---|
+| Strategy adapters (Aave / Compound / Morpho / Venus / Fluid) | **Battle-tested** | Identical source as V1 (`v1.0.0`). 2 months in production on 4 chains, zero security incidents. See [`v1.0.0` release](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v1.0.0) and on-chain history of V1 vaults. |
+| Vault permissions / 3-role separation / asset-movement paths | **Line-by-line documented** | [docs/TRUST_MODEL.md](docs/TRUST_MODEL.md) — every `onlyOwner` / `onlyKeeper` / `onlyGuardian` function enumerated with line references against `Vault.sol`. |
+| Streaming-fee math (`_accrue()`) — **new in V2** | Internal review + unit / invariant / adversarial test suite (78 passing) | [docs/V2_DESIGN.md](docs/V2_DESIGN.md) §3 documents the four audit-critical fixes and the invariant proofs. Coverage table in this README. |
+| Tier-parameterized allocation cap (immutable) | Verified across 3 tiers | `test/v2/Vault.spec.ts` includes per-tier deploy + invariant tests. |
+
+### What's pending
+
+| Item | Status |
+|---|---|
+| Static analysis (Slither / Mythril) — full report public | In preparation |
+| Foundry-style fuzz harness for `_accrue()` precision | In preparation |
+| Bug bounty (Immunefi) | In preparation |
+| External solo audit | Planned post-Soft-Launch (after public-side stress) |
+| Contest audit (Code4rena / Sherlock / Cantina) | Planned post-solo |
+
+### Operating limits during Soft Launch
 
 - Per-chain deposit cap: **$500K USDC** (Conservative tier: $250K)
-- Per-user deposit cap: $10K USDC default (Owner-configurable per address)
+- Per-user deposit cap: **$10K USDC** default (Owner-configurable per address)
 - Performance fee: **1500 bps (15%)**, streaming model — accrued continuously
-  on share price growth, hooked into `_deposit` / `_withdraw` / `setFeeRate`
-- Emergency pause: available (Guardian)
-- Withdrawals always enabled, even while paused
+  on share-price growth, hooked into `_deposit` / `_withdraw` / `setFeeRate`
+- Emergency pause: available (Guardian); **`withdraw()` remains open even while paused**
+- Cap raises are Owner-only via `setDepositCap` / `setDefaultUserCap` Multi-sig calls — see [docs/TRUST_MODEL.md](docs/TRUST_MODEL.md) for the full power list
 
 ### Per-tier `MAX_ALLOCATION_BPS_ABSOLUTE`
 
