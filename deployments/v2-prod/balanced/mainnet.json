@@ -1,0 +1,44 @@
+{
+  "network": "mainnet",
+  "chainId": 1,
+  "timestamp": "2026-06-18T00:36:00.000Z",
+  "deployer": "0xD943214ECF438388ece5035855598010766Aaac1",
+  "contracts": {
+    "vault": "0xE15e1095925aE629450c29b5E4F1dd5b68f6eD07",
+    "strategies": {
+      "aave": "0x243c8C1916762E02e1879299d0ac59d3E52112E4",
+      "compound": "0x81AFFF4d3A8E0C7c7460CF9C94eaa98d544Cf561",
+      "morpho": "0x8DB7Cea5cc773C0f3f18152e4EF63C6Bc25F65DD",
+      "fluid": "0x463964B940D88d0a2De246b22D2a6A0fA55ee467",
+      "spark": "0x84Ca67f73777D5117a6B3c6d576f3397AD8fB8d7"
+    },
+    "strategyMeta": {
+      "aave": { "slug": "aave-v3", "display": "Aave V3" },
+      "compound": { "slug": "compound-v3", "display": "Compound V3" },
+      "morpho": { "slug": "smokehouse-usdc", "display": "Smokehouse USDC" },
+      "fluid": { "slug": "fluid", "display": "Fluid" },
+      "spark": { "slug": "spark", "display": "Spark" }
+    }
+  },
+  "config": {
+    "asset": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "name": "Apyee USDC Vault V2 (Balanced)",
+    "symbol": "apUSDC-b",
+    "initialOwner": "0xD943214ECF438388ece5035855598010766Aaac1",
+    "keeper": "0x84c00eEdBb07C0782dE9758A75114Ee7194FA12c",
+    "guardian": "0xD943214ECF438388ece5035855598010766Aaac1",
+    "treasury": "0xEC4d3B6a39D61B85dF61cCb35CE693517992A98e",
+    "feeRateBps": 1500,
+    "depositCap": "500000000000",
+    "defaultUserCap": "10000000000",
+    "version": "2.0.0-prod-balanced",
+    "versionHash": "0xfdb55585a303e75f7a4789857f4098cb223dc75837bbb8578ac57d0410e2d833",
+    "maxAllocationAbsolute": 4000,
+    "tier": "balanced"
+  },
+  "ownershipTransferred": {
+    "to": "0xEC4d3B6a39D61B85dF61cCb35CE693517992A98e",
+    "txHash": "0xfdc76186f07ff20676a21dbb6b95820e84c60802bc37fce489824ab88c425532",
+    "blockNumber": 25340923
+  }
+}

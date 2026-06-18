@@ -1,0 +1,42 @@
+{
+  "network": "base",
+  "chainId": 8453,
+  "timestamp": "2026-06-17T23:47:39.359Z",
+  "deployer": "0xD943214ECF438388ece5035855598010766Aaac1",
+  "contracts": {
+    "vault": "0x25e8527be8D7e090C4D0111Fa6b5061868F65de4",
+    "strategies": {
+      "aave": "0x81996bB9FC4b7DaE86829B4966208CC1e0409983",
+      "compound": "0x04c4C1bB4170308d6aAcB0Ca3161eF7cf4C55F5c",
+      "morpho": "0x7E91b200b111531B4Fc2A723463Db7cEAd339424",
+      "fluid": "0x38F1da89Ea93cd45eD444284ff46d0Da3d74e52F"
+    },
+    "strategyMeta": {
+      "aave": { "slug": "aave-v3", "display": "Aave V3" },
+      "compound": { "slug": "compound-v3", "display": "Compound V3" },
+      "morpho": { "slug": "moonwell-flagship-usdc", "display": "Moonwell Flagship USDC" },
+      "fluid": { "slug": "fluid", "display": "Fluid" }
+    }
+  },
+  "config": {
+    "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "name": "Apyee USDC Vault V2 (Balanced)",
+    "symbol": "apUSDC-b",
+    "initialOwner": "0xD943214ECF438388ece5035855598010766Aaac1",
+    "keeper": "0x84c00eEdBb07C0782dE9758A75114Ee7194FA12c",
+    "guardian": "0xD943214ECF438388ece5035855598010766Aaac1",
+    "treasury": "0xEC4d3B6a39D61B85dF61cCb35CE693517992A98e",
+    "feeRateBps": 1500,
+    "depositCap": "500000000000",
+    "defaultUserCap": "10000000000",
+    "version": "2.0.0-prod-balanced",
+    "versionHash": "0xfdb55585a303e75f7a4789857f4098cb223dc75837bbb8578ac57d0410e2d833",
+    "maxAllocationAbsolute": 4000,
+    "tier": "balanced"
+  },
+  "ownershipTransferred": {
+    "to": "0xEC4d3B6a39D61B85dF61cCb35CE693517992A98e",
+    "txHash": "0x567dd0439720c098a5400785c520158ebe4de7139c3b0b7a088d6f31832a9fdc",
+    "blockNumber": 47475461
+  }
+}

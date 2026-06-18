@@ -1,0 +1,42 @@
+{
+  "network": "arbitrum",
+  "chainId": 42161,
+  "timestamp": "2026-06-18T00:15:24.176Z",
+  "deployer": "0xD943214ECF438388ece5035855598010766Aaac1",
+  "contracts": {
+    "vault": "0xAf9B06C3Ac9991366cE4bBeC6Ba3170EB2aa0Cb3",
+    "strategies": {
+      "aave": "0xe1d0E01dc5E2247b9b0A4BF7C9a678B30443c742",
+      "compound": "0x1b04438EFab7EfD13A4539640f890656A63BA853",
+      "morpho": "0xE5d59447e7Bfc59Cc6e296491afF79CABFCFdACF",
+      "fluid": "0x803a67018Eee9bBe7D25012A0058BB6fF416978b"
+    },
+    "strategyMeta": {
+      "aave": { "slug": "aave-v3", "display": "Aave V3" },
+      "compound": { "slug": "compound-v3", "display": "Compound V3" },
+      "morpho": { "slug": "gauntlet-usdc-prime", "display": "Gauntlet USDC Prime" },
+      "fluid": { "slug": "fluid", "display": "Fluid" }
+    }
+  },
+  "config": {
+    "asset": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+    "name": "Apyee USDC Vault V2 (Balanced)",
+    "symbol": "apUSDC-b",
+    "initialOwner": "0xD943214ECF438388ece5035855598010766Aaac1",
+    "keeper": "0x84c00eEdBb07C0782dE9758A75114Ee7194FA12c",
+    "guardian": "0xD943214ECF438388ece5035855598010766Aaac1",
+    "treasury": "0xEC4d3B6a39D61B85dF61cCb35CE693517992A98e",
+    "feeRateBps": 1500,
+    "depositCap": "500000000000",
+    "defaultUserCap": "10000000000",
+    "version": "2.0.0-prod-balanced",
+    "versionHash": "0xfdb55585a303e75f7a4789857f4098cb223dc75837bbb8578ac57d0410e2d833",
+    "maxAllocationAbsolute": 4000,
+    "tier": "balanced"
+  },
+  "ownershipTransferred": {
+    "to": "0xEC4d3B6a39D61B85dF61cCb35CE693517992A98e",
+    "txHash": "0x2572c0eaebfaf09090977dde30033b90e03e9dbf6c635871e3304a53dce3af08",
+    "blockNumber": 474603919
+  }
+}
