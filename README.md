@@ -27,12 +27,12 @@ chains plus Aggressive on Base.
 | Streaming-fee math (`_accrue()`) — **new in V2** | Internal review + unit / invariant / adversarial test suite (78 passing) | [docs/V2_DESIGN.md](docs/V2_DESIGN.md) §3 documents the four audit-critical fixes and the invariant proofs. Coverage table in this README. |
 | Tier-parameterized allocation cap (immutable) | Verified across 3 tiers | `test/v2/Vault.spec.ts` includes per-tier deploy + invariant tests. |
 | Static analysis (Slither 0.11.5) | **Complete — no real findings** | [docs/STATIC_ANALYSIS.md](docs/STATIC_ANALYSIS.md): 51 patterns surfaced, all classified as false positives or known design (acknowledged inline). Reproducible via `slither .` |
+| Streaming-fee fuzz harness (Foundry 1.7.1) | **Complete — 100K iterations, zero failures** | [docs/FUZZ_REPORT.md](docs/FUZZ_REPORT.md): 10 properties × 10,000 randomized runs covering the four `_accrue()` fixes plus seven adjacent invariants (`MAX_FEE` bound, pause-does-not-block-withdraw, etc.). Reproducible via `forge test --fuzz-runs 10000` |
 
 ### What's pending
 
 | Item | Status |
 |---|---|
-| Foundry-style fuzz harness for `_accrue()` precision | In preparation |
 | Bug bounty (Immunefi) | In preparation |
 | External solo audit | Planned post-Soft-Launch (after public-side stress) |
 | Contest audit (Code4rena / Sherlock / Cantina) | Planned post-solo |

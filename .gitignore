@@ -59,6 +59,11 @@ slither-report.json
 slither-output.log
 mythril-output.txt
 
+# Foundry — reproduce via `forge install foundry-rs/forge-std --no-git`
+out/
+cache_forge/
+lib/
+
 # Misc
 *.tsbuildinfo
 
