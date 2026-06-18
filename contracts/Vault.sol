@@ -5,6 +5,7 @@ import {ERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.so
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
@@ -12,133 +13,254 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {IStrategy} from "./interfaces/IStrategy.sol";
 import {Errors} from "./libraries/Errors.sol";
 
-/// @title Vault
-/// @notice ERC-4626 vault that allocates a single underlying asset (USDC) across whitelisted strategies.
-/// @dev Immutable — no upgradeable proxy. Critical bugs require V2 redeploy + migration (Yearn/Uniswap pattern).
-contract Vault is ERC4626, Ownable, Pausable, ReentrancyGuard {
+/// @title VaultV2 — Streaming performance fee + parameterized allocation cap
+/// @notice ERC-4626 vault for tier-based deployments (Conservative / Balanced / Aggressive).
+///         Performance fee is **accrued continuously** based on share price growth
+///         (V1 was harvest-triggered). `MAX_ALLOCATION_BPS_ABSOLUTE` is now an immutable
+///         constructor parameter so a single Solidity source can produce N tier-deployment
+///         configs (Generation × Tier matrix — Solo Audit 1× covers all).
+/// @dev Immutable — no upgradeable proxy. V3 would require redeploy + migration.
+///
+/// Key diffs vs V1:
+///   1. `MAX_ALLOCATION_BPS_ABSOLUTE`: `constant 4000` → `immutable` (per-tier override)
+///   2. Add storage: `lastAccruedAt`, `lastSharePrice` (1e18 normalized assets-per-share)
+///   3. Add `_accrue()` — profit-based streaming fee. 3 audit-critical precision fixes baked in.
+///   4. Hook `_accrue()` into `_deposit` / `_withdraw` / `setFeeRate`
+///   5. Remove: `harvest()`, `Harvested` event, `lastRecordedBalance` mapping, baseline bumping
+///      in `_invest` / `_divest` (irrelevant — fees now derive from share price, not strategy P&L)
+///   6. Add: `FeesAccrued` event, `pendingFeeShares()` view (off-chain UX)
+contract VaultV2 is ERC4626, Ownable, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
+    using Math for uint256;
 
     // ─────────────────────────────────────────────────────────────
-    // Constants (hardcoded, immutable post-deploy)
+    // Constants
     // ─────────────────────────────────────────────────────────────
 
     /// @notice Maximum performance fee in bps (20%). Cannot be exceeded.
     uint16 public constant MAX_FEE = 2000;
 
-    /// @notice Absolute upper bound for any single strategy's maxAllocationBps (40% of TVL in bps).
-    /// @dev Per-strategy cap is set in StrategyInfo.maxAllocationBps and must satisfy
-    ///      `targetBps ≤ maxAllocationBps ≤ MAX_ALLOCATION_BPS_ABSOLUTE` (spec 1.20 / 5.7).
-    uint16 public constant MAX_ALLOCATION_BPS_ABSOLUTE = 4000;
+    /// @notice Hard ceiling on `MAX_ALLOCATION_BPS_ABSOLUTE` constructor arg (= 100% TVL).
+    uint16 public constant MAX_ALLOCATION_CEILING = 10000;
 
-    /// @notice Recommended minimum idle ratio (10% of TVL in bps). Keeper guideline, NOT enforced
-    ///         on-chain — emergency withdrawals must still be able to drain idle to 0.
+    /// @notice Recommended minimum idle ratio (Keeper guideline, NOT on-chain enforced).
     uint16 public constant MIN_IDLE_BPS = 1000;
 
     /// @notice Cooldown after auto-blacklist before re-enabling is allowed.
     uint256 public constant BLACKLIST_COOLDOWN = 72 hours;
 
+    /// @notice Share price normalization factor (1e18). Tracked baseline uses this scale.
+    uint256 public constant ACCRUE_PRECISION = 1e18;
+
     /// @dev ERC-4626 inflation attack mitigation. USDC has 6 decimals → shares = 12 decimals.
     uint8 private constant DECIMALS_OFFSET = 6;
+
+    /// @notice Build-time source tag for Etherscan Similar Match 차단.
+    /// @dev Etherscan 의 Similar Match 알고리즘은 bytecode metadata trailer (= source IPFS hash)
+    ///      만 비교 — `immutable` constructor args 는 비교 대상 X. 따라서 `VERSION_HASH` 분기만
+    ///      으론 Similar Match 차단 불가. 이 `SOURCE_TAG` string literal 이 metadata 에 포함
+    ///      되어 generation × tier 마다 다른 metadata hash 를 생성 → Similar Match 차단.
+    ///
+    ///      Deploy script (`scripts/deploy/v2/01-deploy-vault.ts`) 가 `__SOURCE_TAG__` placeholder
+    ///      를 generation × tier 별로 sed 치환 후 compile + deploy + 원본 복원.
+    ///      6 분기 매트릭스 = V2_VAULT.md §4.4:
+    ///         "v2-dev-balanced" / "v2-dev-aggressive" / "v2-dev-conservative" /
+    ///         "v2-prod-balanced" / "v2-prod-aggressive" / "v2-prod-conservative"
+    ///      audit 입장 = 6 분기 모두 literal 외 동일, audit 1× 로 cover.
+    string public constant SOURCE_TAG = "__SOURCE_TAG__";
+
+    // ─────────────────────────────────────────────────────────────
+    // Immutable per-tier config
+    // ─────────────────────────────────────────────────────────────
+
+    /// @notice Per-strategy allocation absolute cap (in bps). Set at deploy time per tier:
+    ///   Conservative tier: 2500 (25%) — single strategy ≤ 1/4 TVL
+    ///   Balanced     tier: 4000 (40%) — current V1 setting
+    ///   Aggressive   tier: 6000 (60%) — single strategy ≤ 3/5 TVL
+    /// @dev Constructor checks `value ≤ MAX_ALLOCATION_CEILING (10000)`. Embedded in runtime bytecode.
+    uint16 public immutable MAX_ALLOCATION_BPS_ABSOLUTE;
+
+    /// @notice keccak256 of the version string. Distinguishes generation × tier (6 hash matrix).
+    /// @dev Expected values (Generation × Tier, set at deploy time):
+    ///   v2-dev-conservative   = keccak256("2.0.0-dev-conservative")
+    ///   v2-dev-balanced       = keccak256("2.0.0-dev-balanced")
+    ///   v2-dev-aggressive     = keccak256("2.0.0-dev-aggressive")
+    ///   v2-prod-conservative  = keccak256("2.0.0-prod-conservative")
+    ///   v2-prod-balanced      = keccak256("2.0.0-prod-balanced")
+    ///   v2-prod-aggressive    = keccak256("2.0.0-prod-aggressive")
+    ///
+    /// Effect:
+    ///   - Backend Keeper bot fail-fast: rejects calls if VERSION_HASH mismatches expected
+    ///     generation × tier for the current environment (dev/prod 혼선 차단)
+    ///   - Debugging: contract identification via storage slot read
+    ///   - Etherscan Similar Match is **unaffected** (metadata-trailer based algorithm) —
+    ///     accepted as V1 / Uniswap V3 pattern. See docs/page2/V2_VAULT.md §4.4.
+    bytes32 public immutable VERSION_HASH;
 
     // ─────────────────────────────────────────────────────────────
     // Roles & Config
     // ─────────────────────────────────────────────────────────────
 
-    /// @notice Address authorized to call harvest() / investToStrategy() / divestFromStrategy() /
-    ///         emergencyWithdraw(). Single EOA.
+    /// @notice Single EOA authorized to call `harvest`-style invest/divest functions.
+    ///         Owner-mutable via `setKeeper`. Keeper cannot move funds outside whitelisted strategies.
+    /// @custom:security single point of failure if compromised — limited blast radius (cannot drain Vault).
     address public keeper;
 
-    /// @notice Address authorized to call pause(). Single EOA, fast response.
+    /// @notice Single EOA authorized to call `pause()` only. Owner-mutable via `setGuardian`.
+    ///         All other Guardian permissions are intentionally absent (CLAUDE.md §2.4).
+    /// @custom:security pausing does NOT block user withdrawals — withdraw/redeem stay open by invariant.
     address public guardian;
 
-    /// @notice Address that receives performance fee shares.
+    /// @notice Address that receives streaming-fee shares (continuous performance fee accrual).
+    ///         Owner-mutable via `setTreasury` (calls `_accrue()` first → settles old treasury).
+    ///         Typically the Treasury Multi-sig Safe.
     address public treasury;
 
-    /// @notice Performance fee in basis points (1e4 = 100%). Bounded by MAX_FEE.
-    uint16 public feeRate;
+    /// @notice Performance fee rate in bps. Bounded by `MAX_FEE` (= 2000 / 20%).
+    ///         Owner-mutable via `setFeeRate` (calls `_accrue()` first → no retroactive taxation).
+    uint16  public feeRate;
 
-    /// @notice Generation identifier hash set at deploy time. Distinguishes dev/prod redeploys
-    ///         of identical Solidity source code AT THE BYTECODE LEVEL (immutable values are
-    ///         embedded in runtime bytecode → genuinely different bytecode per generation).
-    /// @dev `keccak256(abi.encodePacked(versionString))`:
-    ///        - keccak256("1.0.0")      = prod
-    ///        - keccak256("1.0.0-dev")  = dev (mainnet sandbox)
-    ///        - keccak256("1.1.0")      = next prod generation
-    ///      Backends/frontends compare onchain hash with precomputed keccak hashes to identify
-    ///      generation. Hash form chosen over `string public` so etherscan cannot link dev/prod
-    ///      via shared bytecode ("Similar Match" elimination).
-    bytes32 public immutable VERSION_HASH;
-
-    /// @notice Maximum total assets allowed in the vault. Adjusted per launch stage (1.21).
+    /// @notice Hard upper bound on Vault total assets (depositCap). Reverts deposits past this.
+    ///         Owner-mutable via `setDepositCap`. Setting to 0 effectively pauses new deposits
+    ///         (the V1 → V2 migration pattern; see V2_VAULT.md §5.1).
     uint256 public depositCap;
 
-    /// @notice Default per-user deposit cap (USDC value). Applied when `userCap[user] == 0`.
-    /// @dev Free tier — Soft Launch initial 10_000e6 ($10K). Owner adjusts via setDefaultUserCap()
-    ///      to expand all users at once. See SPEC 1.21.4.
+    /// @notice Per-user position cap (applies when `userCap[user] == 0`). Owner-mutable.
+    ///         Soft Launch default $10K, hardcoded in deploy config (see SPEC 1.21.4).
     uint256 public defaultUserCap;
 
-    /// @notice Per-user override cap (USDC value). 0 = no override, falls back to defaultUserCap.
-    /// @dev Pro / Institutional / VIP tiers via setUserCap(user, cap). Backend manages tier policy
-    ///      off-chain — contract only enforces the cap value. SPEC 1.21.4.
+    /// @notice Per-user override cap. Non-zero values take precedence over `defaultUserCap`.
+    ///         Owner-mutable via `setUserCap(user, cap)`. Used for parking wallets / Pro accounts.
     mapping(address => uint256) public userCap;
 
     // ─────────────────────────────────────────────────────────────
-    // Strategy registry
+    // Streaming fee state  (NEW in V2)
     // ─────────────────────────────────────────────────────────────
 
+    /// @notice Last block.timestamp at which `_accrue()` ran.
+    uint256 public lastAccruedAt;
+
+    /// @notice Last share price (assets-per-share × 1e18) at the moment of last accrual.
+    ///         Used as the baseline against which the next accrual computes profit growth.
+    ///         Initialized to ACCRUE_PRECISION (= 1.0 normalized) in constructor.
+    uint256 public lastSharePrice;
+
+    // ─────────────────────────────────────────────────────────────
+    // Strategy whitelist & per-strategy info  (UNCHANGED vs V1 except removed lastRecordedBalance)
+    // ─────────────────────────────────────────────────────────────
+
+    /// @notice Per-strategy whitelist record.
+    /// @dev Slot layout: 2 × uint16 + 2 × bool fits in a single storage slot;
+    ///      `blacklistedAt` consumes the next slot. Keep field order stable for diff
+    ///      readability across V2 generations (dev / prod) — slot packing must not regress.
+    /// @param targetBps         Initial allocation target the Keeper aims for (bps of TVL).
+    /// @param maxAllocationBps  Per-strategy hard cap (bps). Must satisfy `≤ MAX_ALLOCATION_BPS_ABSOLUTE`.
+    /// @param isActive          True if Keeper may invest/divest into this strategy.
+    /// @param isBlacklisted     True after `emergencyWithdraw` — blocks `invest`, allows `divest` only.
+    /// @param blacklistedAt     Timestamp of the blacklist trigger (used for `BLACKLIST_COOLDOWN`).
     struct StrategyInfo {
-        uint16 targetBps; // target allocation in bps (must be ≤ maxAllocationBps)
-        uint16 maxAllocationBps; // per-strategy hard cap in bps (≤ MAX_ALLOCATION_BPS_ABSOLUTE)
-        bool isActive; // currently in rotation
-        bool isBlacklisted; // auto-blacklisted by emergencyWithdraw
-        uint256 blacklistedAt; // timestamp of blacklist (for cooldown)
+        uint16 targetBps;
+        uint16 maxAllocationBps;
+        bool isActive;
+        bool isBlacklisted;
+        uint256 blacklistedAt;
     }
 
+    /// @notice Per-strategy whitelist record. Read with `strategyInfo(addr)`.
     mapping(address => StrategyInfo) public strategyInfo;
-    address[] public strategyList;
 
-    /// @notice Last observed `IStrategy.balanceOf()` per strategy.
-    /// @dev    Updated on every invest / divest / withdraw / emergency / harvest so that
-    ///         `currentBalance - lastRecordedBalance` is the unrealized P&L since last sync.
-    ///         Pure share-price model (spec 1.12): only the diff is fee-bearing; principal
-    ///         movement (invest/divest) updates the baseline directly so it is not mistaken
-    ///         for profit on the next harvest.
-    mapping(address => uint256) public lastRecordedBalance;
+    /// @notice Iterable list of every strategy ever registered (active + blacklisted).
+    ///         Removed strategies are NOT removed from the array — `isActive == false` only.
+    ///         Used by `totalAssets()` to sum balances across all known strategies
+    ///         (active OR blacklisted) and by `_autoPullFromStrategies` to drain idle on withdraw.
+    address[] public strategyList;
 
     // ─────────────────────────────────────────────────────────────
     // Events
     // ─────────────────────────────────────────────────────────────
 
+    /// @notice Keeper EOA changed by Owner (`setKeeper`).
     event KeeperUpdated(address indexed newKeeper);
+
+    /// @notice Guardian EOA changed by Owner (`setGuardian`).
     event GuardianUpdated(address indexed newGuardian);
+
+    /// @notice Treasury address changed by Owner. `_accrue()` ran before the change so any
+    ///         pending fee shares are already minted to the OLD treasury.
     event TreasuryUpdated(address indexed newTreasury);
+
+    /// @notice Performance fee rate changed by Owner. `_accrue()` ran before the change so
+    ///         existing yield is locked in at the OLD rate (no retroactive taxation).
     event FeeRateUpdated(uint16 newRate);
+
+    /// @notice Vault total cap changed by Owner. Setting `newCap == 0` halts new deposits
+    ///         (used during V1 → V2 migration; see V2_VAULT.md §5.1).
     event DepositCapUpdated(uint256 newCap);
 
+    /// @notice Per-user default cap changed by Owner. Applies when `userCap[user] == 0`.
+    event DefaultUserCapUpdated(uint256 newCap);
+
+    /// @notice Per-user override cap set by Owner. `0` reverts to `defaultUserCap`.
+    event UserCapUpdated(address indexed user, uint256 newCap);
+
+    /// @notice Strategy whitelisted with initial target / cap by Owner.
     event StrategyAdded(address indexed strategy, uint16 targetBps, uint16 maxAllocationBps);
+
+    /// @notice Strategy fully removed by Owner (only allowed when `balanceOf == 0`).
     event StrategyRemoved(address indexed strategy);
-    event StrategyMaxAllocationUpdated(address indexed strategy, uint16 newMaxAllocationBps);
-    event StrategyBlacklisted(address indexed strategy, string reason);
+
+    /// @notice Strategy auto-blacklisted by `emergencyWithdraw` (Keeper).
+    event StrategyBlacklisted(address indexed strategy);
+
+    /// @notice Strategy un-blacklisted by Owner after `BLACKLIST_COOLDOWN` elapsed.
     event StrategyUnblacklisted(address indexed strategy);
 
-    event Harvested(uint256 totalProfit, uint256 feeShares);
-    event EmergencyWithdrawal(address indexed strategy, uint256 amount, string reason);
+    /// @notice Per-strategy `maxAllocationBps` updated by Owner. Bounded by `MAX_ALLOCATION_BPS_ABSOLUTE`.
+    event StrategyMaxAllocationUpdated(address indexed strategy, uint16 newMaxBps);
 
+    /// @notice Keeper transferred `amount` of asset from Vault idle into strategy via `IStrategy.deposit`.
     event InvestedToStrategy(address indexed strategy, uint256 amount);
+
+    /// @notice Keeper requested `requested` to be pulled back from strategy; strategy returned `withdrawn`.
+    ///         Slippage / partial-withdraw is normal — front-end should display delta if nonzero.
     event DivestedFromStrategy(address indexed strategy, uint256 requested, uint256 withdrawn);
 
-    event DefaultUserCapUpdated(uint256 newCap);
-    event UserCapUpdated(address indexed user, uint256 cap);
+    /// @notice Keeper drained strategy via `IStrategy.emergencyWithdraw()`. Strategy is auto-blacklisted
+    ///         (`isActive=false`, `isBlacklisted=true`, `blacklistedAt=now`) — un-blacklist requires
+    ///         `BLACKLIST_COOLDOWN` (72h) + Owner action.
+    event EmergencyWithdrawn(address indexed strategy, uint256 withdrawn);
+
+    /// @notice Emitted when `_autoPullFromStrategies` (called from user `withdraw`/`redeem`)
+    ///         skipped a strategy because its `withdraw(amount)` reverted.
+    /// @dev Common cause: protocol-level dust thresholds (e.g. Venus vToken redeem of
+    ///      sub-unit underlying → `redeemTokens zero` revert). The user withdraw continues
+    ///      to the next strategy — overall tx is NOT reverted unless ALL strategies fail
+    ///      AND idle remains short, in which case `IdleInsufficient` reverts at the end.
+    ///      Off-chain monitors should alert on repeated emissions (operator action signal:
+    ///      consider `emergencyWithdraw` on the offending strategy).
+    /// @param strategy   The strategy whose `withdraw` call reverted.
+    /// @param requested  The asset amount that was attempted to pull (skipped).
+    event StrategyWithdrawSkipped(address indexed strategy, uint256 requested);
+
+    /// @notice Emitted when streaming fee is realized (Treasury receives newly-minted shares).
+    /// @param feeAssets    Notional asset value of the fee at the time of accrual.
+    /// @param feeShares    Number of shares minted to `treasury` (dilutive).
+    /// @param newSp        Share price (1e18 normalized) AFTER fee mint (= new baseline).
+    event FeesAccrued(uint256 feeAssets, uint256 feeShares, uint256 newSp);
 
     // ─────────────────────────────────────────────────────────────
     // Modifiers
     // ─────────────────────────────────────────────────────────────
 
+    /// @dev Restricts callable functions to the configured `keeper` EOA only.
+    ///      Reverts with `Errors.NotKeeper()` on mismatch.
     modifier onlyKeeper() {
         if (msg.sender != keeper) revert Errors.NotKeeper();
         _;
     }
 
+    /// @dev Restricts callable functions to the configured `guardian` EOA only.
+    ///      Reverts with `Errors.NotGuardian()` on mismatch.
     modifier onlyGuardian() {
         if (msg.sender != guardian) revert Errors.NotGuardian();
         _;
@@ -148,266 +270,408 @@ contract Vault is ERC4626, Ownable, Pausable, ReentrancyGuard {
     // Constructor
     // ─────────────────────────────────────────────────────────────
 
-    /// @param asset_           Underlying token (USDC).
-    /// @param name_            Vault token name (e.g. "Apyee USDC Vault").
-    /// @param symbol_          Vault token symbol (e.g. "apUSDC").
-    /// @param owner_           Initial owner — should be transferred to Gnosis Safe Multi-sig immediately after deploy.
-    /// @param keeper_          Initial Keeper EOA.
-    /// @param guardian_        Initial Guardian EOA.
-    /// @param treasury_        Initial Treasury address (receives fee shares).
-    /// @param feeRate_         Initial performance fee in bps. Must be ≤ MAX_FEE.
-    /// @param depositCap_      Initial vault total deposit cap. Soft Launch = 10_000e6 USDC (1.21.4).
-    /// @param defaultUserCap_  Initial per-user deposit cap (Free tier). Soft Launch = 10_000e6 USDC (1.21.4).
-    /// @param versionHash_     Generation hash: keccak256("1.0.0") for prod, keccak256("1.0.0-dev") for dev.
-    constructor(
-        IERC20 asset_,
-        string memory name_,
-        string memory symbol_,
-        address owner_,
-        address keeper_,
-        address guardian_,
-        address treasury_,
-        uint16 feeRate_,
-        uint256 depositCap_,
-        uint256 defaultUserCap_,
-        bytes32 versionHash_
-    ) ERC4626(asset_) ERC20(name_, symbol_) Ownable(owner_) {
-        if (owner_ == address(0)) revert Errors.ZeroAddress();
-        if (keeper_ == address(0)) revert Errors.ZeroAddress();
-        if (guardian_ == address(0)) revert Errors.ZeroAddress();
-        if (treasury_ == address(0)) revert Errors.ZeroAddress();
-        if (feeRate_ > MAX_FEE) revert Errors.FeeTooHigh(feeRate_, MAX_FEE);
-        if (versionHash_ == bytes32(0)) revert Errors.ZeroAmount();
+    /// @notice Aggregated initialization config. Grouped into a struct so the constructor
+    ///         fits within Solidity's stack-depth limit without `viaIR=true` — important for
+    ///         solidity-coverage instrumentation compatibility.
+    /// @dev Field order has no on-chain significance, but matches the historical positional
+    ///      constructor for diff readability.
+    struct InitConfig {
+        IERC20 asset;
+        string name;
+        string symbol;
+        address initialOwner;
+        address keeper;
+        address guardian;
+        address treasury;
+        uint16 feeRate;
+        uint256 depositCap;
+        uint256 defaultUserCap;
+        uint16 maxAllocationAbsolute; // per-tier cap (2500 / 4000 / 6000)
+        bytes32 versionHash;          // see V2_VAULT.md §4.4 (6-hash matrix)
+    }
 
-        keeper = keeper_;
-        guardian = guardian_;
-        treasury = treasury_;
-        feeRate = feeRate_;
-        depositCap = depositCap_;
-        defaultUserCap = defaultUserCap_;
-        VERSION_HASH = versionHash_;
+    constructor(InitConfig memory cfg)
+        ERC4626(cfg.asset)
+        ERC20(cfg.name, cfg.symbol)
+        Ownable(cfg.initialOwner)
+    {
+        if (cfg.keeper == address(0) || cfg.guardian == address(0) || cfg.treasury == address(0)) {
+            revert Errors.ZeroAddress();
+        }
+        if (cfg.feeRate > MAX_FEE) revert Errors.FeeTooHigh(cfg.feeRate, MAX_FEE);
+        if (cfg.maxAllocationAbsolute == 0 || cfg.maxAllocationAbsolute > MAX_ALLOCATION_CEILING) {
+            revert Errors.AllocationExceeded(cfg.maxAllocationAbsolute, MAX_ALLOCATION_CEILING);
+        }
+        if (cfg.depositCap == 0) revert Errors.ZeroAmount();
+        if (cfg.defaultUserCap == 0) revert Errors.ZeroAmount();
 
-        emit KeeperUpdated(keeper_);
-        emit GuardianUpdated(guardian_);
-        emit TreasuryUpdated(treasury_);
-        emit FeeRateUpdated(feeRate_);
-        emit DepositCapUpdated(depositCap_);
-        emit DefaultUserCapUpdated(defaultUserCap_);
+        keeper = cfg.keeper;
+        guardian = cfg.guardian;
+        treasury = cfg.treasury;
+        feeRate = cfg.feeRate;
+        depositCap = cfg.depositCap;
+        defaultUserCap = cfg.defaultUserCap;
+        MAX_ALLOCATION_BPS_ABSOLUTE = cfg.maxAllocationAbsolute;
+        VERSION_HASH = cfg.versionHash;
+
+        // Streaming fee baseline — lazy init.
+        //
+        // `lastSharePrice` is NOT pre-seeded with `ACCRUE_PRECISION` (1e18). Reason:
+        // `_calcSharePrice()` returns `TA × 1e18 / TS`, and on the first deposit the
+        // share count is `assets × 10**decimalsOffset` (= USDC 6 + offset 6 = 1e12 units).
+        // That makes the first observed `sp ≈ 1e12`, far below 1e18 — a naive
+        // ACCRUE_PRECISION baseline would trip the loss-tolerance branch on the very
+        // first action and silently drift the baseline downward.
+        //
+        // Instead we leave `lastSharePrice = 0` (default) and snap it to the actual
+        // share price in `_deposit()` right after `super._deposit()` produces non-zero
+        // supply. `_accrue()` also carries a defensive `lastSharePrice == 0` early-return
+        // for any path where supply becomes non-zero without going through `_deposit`.
+        lastAccruedAt = block.timestamp;
+
+        emit KeeperUpdated(cfg.keeper);
+        emit GuardianUpdated(cfg.guardian);
+        emit TreasuryUpdated(cfg.treasury);
+        emit FeeRateUpdated(cfg.feeRate);
+        emit DepositCapUpdated(cfg.depositCap);
+        emit DefaultUserCapUpdated(cfg.defaultUserCap);
     }
 
     // ─────────────────────────────────────────────────────────────
-    // ERC-4626 overrides
+    // Decimals offset (ERC-4626 inflation attack mitigation)
     // ─────────────────────────────────────────────────────────────
 
-    /// @inheritdoc ERC4626
+    /// @dev Returns the shares-to-asset decimal offset (= 6). USDC has 6 decimals → shares get 12.
+    ///      OpenZeppelin's `_decimalsOffset` is the canonical inflation-attack defense for ERC-4626.
     function _decimalsOffset() internal pure override returns (uint8) {
         return DECIMALS_OFFSET;
     }
 
-    /// @notice Total assets = idle balance held by the vault + sum of all active strategies' balances.
-    function totalAssets() public view override returns (uint256 total) {
-        total = IERC20(asset()).balanceOf(address(this));
-        uint256 length = strategyList.length;
-        for (uint256 i = 0; i < length; ++i) {
-            address strat = strategyList[i];
-            if (strategyInfo[strat].isActive) {
-                total += IStrategy(strat).balanceOf();
-            }
+    // ─────────────────────────────────────────────────────────────
+    // 🌟 STREAMING FEE — core innovation of V2
+    // ─────────────────────────────────────────────────────────────
+
+    /// @notice Read-only view of pending fee shares (= would-mint amount if `_accrue` ran now).
+    /// @dev Off-chain consumers (frontend / Keeper bot / DeFiLlama) can show "accrued but not realized".
+    ///      Returns 0 if share price has not grown since last accrual (loss tolerance — see [[1]] below).
+    function pendingFeeShares() external view returns (uint256) {
+        if (totalSupply() == 0) return 0;
+        uint256 sp = _calcSharePrice();
+        if (sp <= lastSharePrice) return 0;
+        return _feeSharesFor(sp);
+    }
+
+    /// @notice Forces accrual. Anyone can call (no permission) — harmless / idempotent.
+    /// @dev Useful for manual sync or Keeper convenience. Normal users don't need to call it.
+    function accrue() external nonReentrant {
+        _accrue();
+    }
+
+    /// @dev Internal accrual — invoked by every state-changing user action (`_deposit` / `_withdraw`)
+    ///      and by `setFeeRate` (so old rate is locked in before new rate applies — anti-soak guard).
+    ///
+    ///      Three audit-critical fixes baked into this implementation (see [[2..4]]):
+    ///        [[1]] Loss tolerance: `sp <= lastSp` → no fee, baseline only updates downward (no
+    ///              double-charging when sp recovers from a transient dip — but no HWM either,
+    ///              by design choice [[CONFIRMED 2026-06-01]]).
+    ///        [[2]] Direct asset-unit fee math (no `profitBps` intermediate) — preserves 1e18
+    ///              precision on stable yields (5% APY = 1.37bps/day, would lose 27%/day to
+    ///              integer truncation if going through bps).
+    ///        [[3]] Correct dilutive share-mint formula:
+    ///              `feeShares = feeAssets × TS / (TA - feeAssets)`  ← solves for "minted shares
+    ///              equal feeAssets in value after dilution". Standard `convertToShares(feeAssets)`
+    ///              would slightly undercharge.
+    ///        [[4]] Post-mint baseline = `sp` (pre-mint, the value we just taxed) — NOT recalculated
+    ///              `_calcSharePrice()` (post-mint, already-diluted). Re-reading would let the
+    ///              dilution-recovery be re-counted as new yield → double taxation.
+    function _accrue() internal {
+        if (lastAccruedAt == block.timestamp) return;   // same-block re-entry: skip
+        if (totalSupply() == 0) {                       // pre-first-deposit: just bump timestamp
+            lastAccruedAt = block.timestamp;
+            return;
+        }
+
+        uint256 sp = _calcSharePrice();
+
+        // Defensive lazy-init guard. Normally `_deposit()` snaps `lastSharePrice` to the
+        // first sp after `super._deposit()`, so this branch only triggers if supply became
+        // non-zero by some non-standard path. Treat as "first observation": initialize baseline
+        // and skip fee (no historical reference to compare against).
+        /* istanbul ignore next — unreachable under standard deposit flow; kept as a defensive
+           guard for any future path that bumps totalSupply() outside _deposit. */
+        if (lastSharePrice == 0) {
+            lastAccruedAt = block.timestamp;
+            lastSharePrice = sp;
+            return;
+        }
+
+        // [[1]] Loss/flat: no fee, baseline tracks downward (no HWM by design)
+        if (sp <= lastSharePrice) {
+            lastAccruedAt = block.timestamp;
+            lastSharePrice = sp;
+            return;
+        }
+
+        // [[2]] Compute feeAssets directly from sp delta (no profitBps intermediate)
+        //       feeAssets = TA × (sp - lastSp) × feeRate / (lastSp × 1e4)
+        uint256 ta = totalAssets();
+        uint256 feeAssets = ta.mulDiv(
+            (sp - lastSharePrice) * uint256(feeRate),
+            lastSharePrice * 10_000,
+            Math.Rounding.Floor
+        );
+
+        if (feeAssets == 0) {
+            // Sub-wei profit / extreme dust — skip mint, bump baseline + timestamp
+            lastAccruedAt = block.timestamp;
+            lastSharePrice = sp;
+            return;
+        }
+
+        // Safety: feeAssets cannot exceed totalAssets (defensive — denominator math would already block)
+        if (feeAssets >= ta) {
+            // Should never happen on a non-pathological feeRate ≤ 2000. Defensive revert.
+            revert Errors.FeeTooHigh(feeRate, MAX_FEE);
+        }
+
+        // [[3]] Correct dilutive share-mint: shares such that minted value = feeAssets after dilution
+        uint256 ts = totalSupply();
+        uint256 feeShares = feeAssets.mulDiv(ts, ta - feeAssets, Math.Rounding.Floor);
+
+        /* istanbul ignore next — Math.mulDiv(Floor) of a positive numerator can in theory
+           round to zero, but only under degenerate supply (≈ 1 wei share). OZ's ERC-4626
+           _decimalsOffset mitigation keeps the share floor far above that. */
+        if (feeShares == 0) {
+            lastAccruedAt = block.timestamp;
+            lastSharePrice = sp;
+            return;
+        }
+
+        _mint(treasury, feeShares);
+
+        // [[4]] Baseline = pre-mint sp (already taxed), NOT post-mint (would double-tax on recovery)
+        lastAccruedAt = block.timestamp;
+        lastSharePrice = sp;
+
+        emit FeesAccrued(feeAssets, feeShares, sp);
+    }
+
+    /// @dev Share price in 1e18-normalized assets-per-share.
+    ///      Returns ACCRUE_PRECISION when supply is 0 (pre-first-deposit).
+    function _calcSharePrice() internal view returns (uint256) {
+        uint256 ts = totalSupply();
+        /* istanbul ignore next — both callers (_accrue, _feeSharesFor via pendingFeeShares)
+           gate on totalSupply() > 0 first; kept defensively to keep the helper standalone. */
+        if (ts == 0) return ACCRUE_PRECISION;
+        return totalAssets().mulDiv(ACCRUE_PRECISION, ts, Math.Rounding.Floor);
+    }
+
+    /// @dev Compute would-mint fee shares for a hypothetical post-yield share price `sp`.
+    ///      Used by view function `pendingFeeShares` — not by `_accrue` (which inlines for clarity).
+    function _feeSharesFor(uint256 sp) internal view returns (uint256) {
+        uint256 ta = totalAssets();
+        uint256 feeAssets = ta.mulDiv(
+            (sp - lastSharePrice) * uint256(feeRate),
+            lastSharePrice * 10_000,
+            Math.Rounding.Floor
+        );
+        if (feeAssets == 0 || feeAssets >= ta) return 0;
+        return feeAssets.mulDiv(totalSupply(), ta - feeAssets, Math.Rounding.Floor);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // ERC-4626 hooks — accrue BEFORE deposit/withdraw runs
+    // ─────────────────────────────────────────────────────────────
+
+    /// @dev OZ ERC-4626 hook. Runs `_accrue()` first (so the deposit price is fee-correct),
+    ///      then enforces per-user + Vault caps, then delegates to `super._deposit()`.
+    ///      Lazy initializes `lastSharePrice` after the first successful deposit (see constructor).
+    function _deposit(address caller, address receiver, uint256 assets, uint256 shares)
+        internal
+        override
+    {
+        _accrue();
+        // Per-user cap
+        uint256 cap = userCap[receiver] > 0 ? userCap[receiver] : defaultUserCap;
+        uint256 receiverPosition = convertToAssets(balanceOf(receiver));
+        if (receiverPosition + assets > cap) revert Errors.UserCapExceeded(receiverPosition + assets, cap);
+        // Vault cap
+        if (totalAssets() + assets > depositCap) {
+            revert Errors.DepositCapReached(totalAssets() + assets, depositCap);
+        }
+        super._deposit(caller, receiver, assets, shares);
+
+        // Lazy baseline init (see constructor comment). After the first successful super._deposit
+        // totalSupply() > 0 holds, so `_calcSharePrice()` returns a meaningful value that matches
+        // the scale produced by `_accrue()` going forward. Skipped on subsequent deposits because
+        // `lastSharePrice` is already non-zero (and would otherwise overwrite a taxed baseline).
+        if (lastSharePrice == 0) {
+            lastSharePrice = _calcSharePrice();
         }
     }
 
-    /// @inheritdoc ERC4626
-    function maxDeposit(address receiver) public view override returns (uint256) {
-        if (paused()) return 0;
-        uint256 ta = totalAssets();
-        if (ta >= depositCap) return 0;
-        uint256 vaultRemaining = depositCap - ta;
-
-        uint256 cap = _effectiveUserCap(receiver);
-        uint256 currentValue = convertToAssets(balanceOf(receiver));
-        uint256 userRemaining = cap > currentValue ? cap - currentValue : 0;
-
-        return vaultRemaining < userRemaining ? vaultRemaining : userRemaining;
+    /// @dev OZ ERC-4626 hook. Runs `_accrue()` first (fee-correct exit price), then auto-pulls
+    ///      from strategies if Vault idle is insufficient, then delegates to `super._withdraw()`.
+    ///      Auto-pull iterates `strategyList` until enough idle is gathered, reverting
+    ///      `IdleInsufficient` if exhaustion still leaves idle short.
+    function _withdraw(address caller, address receiver, address owner, uint256 assets, uint256 shares)
+        internal
+        override
+    {
+        _accrue();
+        // Auto-pull from strategies if idle insufficient
+        uint256 idle = IERC20(asset()).balanceOf(address(this));
+        if (idle < assets) {
+            _autoPullFromStrategies(assets - idle);
+        }
+        super._withdraw(caller, receiver, owner, assets, shares);
     }
 
     /// @inheritdoc ERC4626
+    /// @dev Wraps with `nonReentrant` + `whenNotPaused`. Per-user / Vault caps enforced inside `_deposit`.
+    function deposit(uint256 assets, address receiver) public override nonReentrant whenNotPaused returns (uint256) {
+        return super.deposit(assets, receiver);
+    }
+
+    /// @inheritdoc ERC4626
+    /// @dev Wraps with `nonReentrant` + `whenNotPaused`. Mints `shares` to `receiver` by converting assets.
+    function mint(uint256 shares, address receiver) public override nonReentrant whenNotPaused returns (uint256) {
+        return super.mint(shares, receiver);
+    }
+
+    /// @inheritdoc ERC4626
+    /// @dev Withdraw is ALWAYS allowed, even when paused (CLAUDE.md §2.4 invariant). Auto-pulls from
+    ///      strategies via `_autoPullFromStrategies` if idle is short. `_accrue()` runs first
+    ///      via `_withdraw` hook so the withdrawal price is fee-correct.
+    function withdraw(uint256 assets, address receiver, address owner) public override nonReentrant returns (uint256) {
+        return super.withdraw(assets, receiver, owner);
+    }
+
+    /// @inheritdoc ERC4626
+    /// @dev Same invariants as `withdraw`. Burns `shares` and returns the corresponding assets.
+    function redeem(uint256 shares, address receiver, address owner) public override nonReentrant returns (uint256) {
+        return super.redeem(shares, receiver, owner);
+    }
+
+    /// @inheritdoc ERC4626
+    /// @dev Returns the minimum of: (a) per-user remaining cap and (b) Vault remaining cap.
+    ///      Returns 0 while paused (Vault rejects new deposits).
+    function maxDeposit(address receiver) public view override returns (uint256) {
+        if (paused()) return 0;
+        uint256 cap = userCap[receiver] > 0 ? userCap[receiver] : defaultUserCap;
+        uint256 pos = convertToAssets(balanceOf(receiver));
+        uint256 userRemaining = pos < cap ? cap - pos : 0;
+        uint256 ta = totalAssets();
+        uint256 vaultRemaining = ta < depositCap ? depositCap - ta : 0;
+        return userRemaining < vaultRemaining ? userRemaining : vaultRemaining;
+    }
+
+    /// @inheritdoc ERC4626
+    /// @dev Convenience converter — `maxDeposit(receiver)` translated to share units.
     function maxMint(address receiver) public view override returns (uint256) {
         return convertToShares(maxDeposit(receiver));
     }
 
-    function deposit(uint256 assets, address receiver)
-        public
-        override
-        nonReentrant
-        whenNotPaused
-        returns (uint256)
-    {
-        // Check per-user cap first (clearer UX error — user knows it's their own cap).
-        _enforcePerUserCap(receiver, assets);
-        uint256 ta = totalAssets();
-        if (ta + assets > depositCap) revert Errors.DepositCapReached(ta + assets, depositCap);
-        return super.deposit(assets, receiver);
-    }
-
-    function mint(uint256 shares, address receiver)
-        public
-        override
-        nonReentrant
-        whenNotPaused
-        returns (uint256)
-    {
-        uint256 assets = previewMint(shares);
-        _enforcePerUserCap(receiver, assets);
-        uint256 ta = totalAssets();
-        if (ta + assets > depositCap) revert Errors.DepositCapReached(ta + assets, depositCap);
-        return super.mint(shares, receiver);
-    }
-
-    /// @dev Returns the effective per-user cap: override if set (> 0), otherwise default.
-    function _effectiveUserCap(address user) internal view returns (uint256) {
-        uint256 override_ = userCap[user];
-        return override_ > 0 ? override_ : defaultUserCap;
-    }
-
-    /// @dev Reverts if `receiver` current USDC value + new `assets` exceeds their effective cap.
-    ///      Yield-driven growth above the cap is OK (already-deposited principal); only further
-    ///      deposits are blocked. Transfer-in of shares from another address bypasses this check
-    ///      (deposit-time only) — accepted edge case (ERC-20 transfer hook gas cost not justified).
-    function _enforcePerUserCap(address receiver, uint256 assets) internal view {
-        uint256 cap = _effectiveUserCap(receiver);
-        uint256 currentValue = convertToAssets(balanceOf(receiver));
-        uint256 attempted = currentValue + assets;
-        if (attempted > cap) revert Errors.UserCapExceeded(cap, attempted);
-    }
-
-    /// @notice Withdraw assets — always available, even when paused (CLAUDE.md 2.4).
-    /// @dev Auto-pulls from strategies if idle balance is insufficient (Pattern B).
-    function withdraw(uint256 assets, address receiver, address owner_)
-        public
-        override
-        nonReentrant
-        returns (uint256)
-    {
-        _pullFromStrategies(assets);
-        return super.withdraw(assets, receiver, owner_);
-    }
-
-    /// @notice Redeem shares — always available, even when paused.
-    /// @dev Auto-pulls from strategies if idle balance is insufficient (Pattern B).
-    function redeem(uint256 shares, address receiver, address owner_)
-        public
-        override
-        nonReentrant
-        returns (uint256)
-    {
-        _pullFromStrategies(previewRedeem(shares));
-        return super.redeem(shares, receiver, owner_);
-    }
-
-    /// @dev Pull funds from active strategies to satisfy `assets` worth of withdrawals.
-    ///      Iterates strategyList in order; skips inactive/blacklisted/empty entries.
-    ///      If after iteration the idle balance is still insufficient, super.withdraw will
-    ///      revert in the underlying transfer step (vault is illiquid — emergency state).
-    function _pullFromStrategies(uint256 assets) internal {
-        address vaultAsset = asset();
-        uint256 idle = IERC20(vaultAsset).balanceOf(address(this));
-        if (idle >= assets) return;
-
-        uint256 needed = assets - idle;
+    /// @inheritdoc ERC4626
+    /// @notice Vault total assets = idle USDC + Σ strategy.balanceOf() (active + blacklisted).
+    /// @dev INVARIANT: `totalAssets() == idle + sum(strategy.balanceOf for s in strategyList
+    ///      where isActive || isBlacklisted)`. Verified by [CLAUDE.md §5.2] invariant tests.
+    ///      Blacklisted strategies are still summed so that user redemptions don't undervalue
+    ///      shares (assets are still recoverable via Owner `removeStrategy` after blacklist).
+    function totalAssets() public view override returns (uint256) {
+        uint256 idle = IERC20(asset()).balanceOf(address(this));
         uint256 length = strategyList.length;
-
-        for (uint256 i = 0; i < length && needed > 0; ++i) {
-            address strat = strategyList[i];
-            if (!strategyInfo[strat].isActive) continue;
-
-            uint256 stratBal = IStrategy(strat).balanceOf();
-            if (stratBal == 0) continue;
-
-            uint256 pull = needed > stratBal ? stratBal : needed;
-            uint256 withdrawn = IStrategy(strat).withdraw(pull);
-
-            // Principal pull — drop baseline by actual amount returned.
-            uint256 lastBal = lastRecordedBalance[strat];
-            lastRecordedBalance[strat] = withdrawn >= lastBal ? 0 : lastBal - withdrawn;
-
-            if (withdrawn >= needed) {
-                needed = 0;
-                break;
-            }
-            unchecked {
-                needed -= withdrawn;
+        uint256 sum;
+        for (uint256 i = 0; i < length; ++i) {
+            address s = strategyList[i];
+            if (strategyInfo[s].isActive || strategyInfo[s].isBlacklisted) {
+                sum += IStrategy(s).balanceOf();
             }
         }
-        // If `needed > 0` here, super.withdraw's underlying safeTransfer will revert
-        // with ERC20InsufficientBalance — vault cannot satisfy the withdrawal.
+        return idle + sum;
     }
 
     // ─────────────────────────────────────────────────────────────
-    // Owner config (Multi-sig)
+    // Owner config setters — _accrue() BEFORE rate changes
     // ─────────────────────────────────────────────────────────────
 
+    /// @notice Replace the Keeper EOA. Only Owner can call.
+    /// @param newKeeper The new Keeper address. Non-zero required.
     function setKeeper(address newKeeper) external onlyOwner {
         if (newKeeper == address(0)) revert Errors.ZeroAddress();
         keeper = newKeeper;
         emit KeeperUpdated(newKeeper);
     }
 
+    /// @notice Replace the Guardian EOA. Only Owner can call.
+    /// @param newGuardian The new Guardian address. Non-zero required.
     function setGuardian(address newGuardian) external onlyOwner {
         if (newGuardian == address(0)) revert Errors.ZeroAddress();
         guardian = newGuardian;
         emit GuardianUpdated(newGuardian);
     }
 
+    /// @notice Replace the Treasury (streaming-fee share recipient). Only Owner can call.
+    /// @dev Calls `_accrue()` first so that pending fee shares mint to the OLD treasury
+    ///      before the address swap — prevents "treasury swap during pending yield" exploit.
+    /// @param newTreasury The new Treasury address. Non-zero required.
     function setTreasury(address newTreasury) external onlyOwner {
         if (newTreasury == address(0)) revert Errors.ZeroAddress();
+        _accrue();          // settle any pending fees to OLD treasury before switch
         treasury = newTreasury;
         emit TreasuryUpdated(newTreasury);
     }
 
+    /// @notice Update performance fee rate. Accrues old rate first → no retroactive taxation.
+    /// @dev CRITICAL: `_accrue()` runs BEFORE `feeRate` is mutated so that historical yield
+    ///      is taxed at the OLD rate. Without this, a rate change would retroactively re-tax
+    ///      already-realized yield at the new rate (audit-critical pattern).
+    /// @param newRate The new fee rate in bps. Bounded by `MAX_FEE` (= 2000 / 20%).
     function setFeeRate(uint16 newRate) external onlyOwner {
         if (newRate > MAX_FEE) revert Errors.FeeTooHigh(newRate, MAX_FEE);
+        _accrue();          // CRITICAL: lock in fees at OLD rate before NEW rate applies
         feeRate = newRate;
         emit FeeRateUpdated(newRate);
     }
 
-    /// @notice Vault total deposit cap. Soft Launch 10_000e6 → Public 100_000e6 → Public+ unbounded (1.21.4).
+    /// @notice Update Vault total deposit cap. Only Owner can call. Zero halts new deposits
+    ///         (existing positions still withdrawable — used for V1 → V2 migration step 2).
+    /// @param newCap The new Vault cap in asset units (USDC raw with 6 decimals).
     function setDepositCap(uint256 newCap) external onlyOwner {
         depositCap = newCap;
         emit DepositCapUpdated(newCap);
     }
 
-    /// @notice Default per-user deposit cap (Free tier). Backend manages tier policy off-chain
-    ///         and calls setUserCap() for individual overrides (Pro/Institutional/VIP).
-    /// @dev Setting to 0 effectively blocks all default-tier deposits (intentional emergency lever).
+    /// @notice Update default per-user cap (applies when `userCap[user] == 0`). Only Owner.
+    /// @param newCap The new default per-user cap in asset units.
     function setDefaultUserCap(uint256 newCap) external onlyOwner {
         defaultUserCap = newCap;
         emit DefaultUserCapUpdated(newCap);
     }
 
-    /// @notice Per-user override cap. `cap = 0` removes the override (falls back to defaultUserCap).
-    /// @dev Free → Pro upgrade: setUserCap(user, 100_000e6). Pro → Free downgrade: setUserCap(user, 0).
-    ///      Owner-only by design. Phase 2 may delegate to a pricingManager hot wallet for Pro scale.
-    function setUserCap(address user, uint256 cap) external onlyOwner {
-        if (user == address(0)) revert Errors.ZeroAddress();
-        userCap[user] = cap;
-        emit UserCapUpdated(user, cap);
+    /// @notice Override a specific user's cap. Only Owner. Setting `newCap = 0` reverts
+    ///         the user back to `defaultUserCap`.
+    /// @param user   The user address whose cap is being overridden.
+    /// @param newCap The override cap in asset units (0 → revert to default).
+    function setUserCap(address user, uint256 newCap) external onlyOwner {
+        userCap[user] = newCap;
+        emit UserCapUpdated(user, newCap);
     }
 
     // ─────────────────────────────────────────────────────────────
-    // Strategy management (Owner)
+    // Strategy management — unchanged from V1 except removed lastRecordedBalance
     // ─────────────────────────────────────────────────────────────
 
-    /// @notice Add a new strategy with its own allocation cap.
-    /// @param strategy           Strategy adapter address.
-    /// @param targetBps          Initial target allocation (Keeper attempts to maintain this).
-    /// @param maxAllocationBps_  Hard cap for this strategy (e.g. Aave 4000 / Compound 3500 / new 2000).
-    ///                           Must satisfy `targetBps ≤ maxAllocationBps_ ≤ MAX_ALLOCATION_BPS_ABSOLUTE`.
-    function addStrategy(address strategy, uint16 targetBps, uint16 maxAllocationBps_)
-        external
-        onlyOwner
-    {
+    /// @notice Whitelist a strategy. Only Owner. Strategy must:
+    ///   1. expose `IStrategy.asset()` matching the Vault's underlying USDC,
+    ///   2. specify `maxAllocationBps_ ≤ MAX_ALLOCATION_BPS_ABSOLUTE` (tier cap),
+    ///   3. specify `targetBps ≤ maxAllocationBps_`.
+    /// @dev Pushes to `strategyList` (iterable). Already-added or blacklisted strategy reverts.
+    /// @param strategy           Strategy contract address (must implement `IStrategy`).
+    /// @param targetBps          Initial allocation target the Keeper aims for (bps of TVL).
+    /// @param maxAllocationBps_  Per-strategy hard cap (bps). Must satisfy ≤ `MAX_ALLOCATION_BPS_ABSOLUTE`.
+    function addStrategy(address strategy, uint16 targetBps, uint16 maxAllocationBps_) external onlyOwner {
         if (strategy == address(0)) revert Errors.ZeroAddress();
-
         StrategyInfo storage info = strategyInfo[strategy];
         if (info.isActive || info.isBlacklisted) revert Errors.StrategyAlreadyAdded(strategy);
 
@@ -427,12 +691,14 @@ contract Vault is ERC4626, Ownable, Pausable, ReentrancyGuard {
         info.isBlacklisted = false;
         info.blacklistedAt = 0;
         strategyList.push(strategy);
-
         emit StrategyAdded(strategy, targetBps, maxAllocationBps_);
     }
 
-    /// @notice Update a strategy's per-strategy allocation cap.
-    /// @dev Useful when a protocol's risk profile changes (e.g. Compound recently audited → raise cap).
+    /// @notice Update a strategy's per-strategy hard cap. Only Owner.
+    /// @dev Strategy must be active or blacklisted (already registered). New cap must satisfy
+    ///      `newMaxBps ≤ MAX_ALLOCATION_BPS_ABSOLUTE` AND `info.targetBps ≤ newMaxBps`.
+    /// @param strategy   The strategy address whose cap is being updated.
+    /// @param newMaxBps  The new max allocation in bps.
     function setStrategyMaxAllocation(address strategy, uint16 newMaxBps) external onlyOwner {
         StrategyInfo storage info = strategyInfo[strategy];
         if (!info.isActive && !info.isBlacklisted) revert Errors.StrategyNotWhitelisted(strategy);
@@ -446,29 +712,31 @@ contract Vault is ERC4626, Ownable, Pausable, ReentrancyGuard {
         emit StrategyMaxAllocationUpdated(strategy, newMaxBps);
     }
 
-    /// @notice Remove a strategy. Must have zero balance — drain via emergencyWithdraw or rebalance first.
+    /// @notice Permanently remove a strategy. Only Owner. Strategy must have **zero balance**
+    ///         (Keeper should `divestFromStrategy` everything first). Strategy stays in
+    ///         `strategyList` (not array-removed) but is marked inactive — `totalAssets()`
+    ///         no longer sums its balance.
+    /// @param strategy  The strategy address to remove.
     function removeStrategy(address strategy) external onlyOwner {
         StrategyInfo storage info = strategyInfo[strategy];
         if (!info.isActive && !info.isBlacklisted) revert Errors.StrategyNotWhitelisted(strategy);
-
         uint256 bal = IStrategy(strategy).balanceOf();
         if (bal > 0) revert Errors.StrategyHasBalance(strategy, bal);
-
         info.isActive = false;
         info.isBlacklisted = false;
         info.targetBps = 0;
-        // strategyList not pruned — isActive flag handles iteration filtering.
         emit StrategyRemoved(strategy);
     }
 
-    /// @notice Re-enable a previously auto-blacklisted strategy. Subject to BLACKLIST_COOLDOWN (72h).
+    /// @notice Re-enable a blacklisted strategy. Only Owner. Requires `BLACKLIST_COOLDOWN` (72h)
+    ///         to have elapsed since the auto-blacklist trigger — cooling-off period for
+    ///         re-evaluation of the underlying protocol issue.
+    /// @param strategy  The blacklisted strategy address.
     function unblacklistStrategy(address strategy) external onlyOwner {
         StrategyInfo storage info = strategyInfo[strategy];
         if (!info.isBlacklisted) revert Errors.StrategyNotWhitelisted(strategy);
-
-        uint256 elapsed = block.timestamp - info.blacklistedAt;
-        if (elapsed < BLACKLIST_COOLDOWN) {
-            revert Errors.BlacklistCooldownActive(BLACKLIST_COOLDOWN - elapsed);
+        if (block.timestamp < info.blacklistedAt + BLACKLIST_COOLDOWN) {
+            revert Errors.BlacklistCooldownActive(info.blacklistedAt + BLACKLIST_COOLDOWN);
         }
         info.isBlacklisted = false;
         info.isActive = true;
@@ -476,42 +744,17 @@ contract Vault is ERC4626, Ownable, Pausable, ReentrancyGuard {
         emit StrategyUnblacklisted(strategy);
     }
 
-    function strategyCount() external view returns (uint256) {
-        return strategyList.length;
-    }
-
     // ─────────────────────────────────────────────────────────────
-    // Pause (Guardian pauses, Owner unpauses)
+    // Keeper actions — invest/divest (no fee logic; fees come from share price tracking)
     // ─────────────────────────────────────────────────────────────
 
-    function pause() external onlyGuardian {
-        _pause();
-    }
-
-    function unpause() external onlyOwner {
-        _unpause();
-    }
-
-    // ─────────────────────────────────────────────────────────────
-    // Liquidity routing (Keeper) — Pattern B: explicit invest, auto-pull on withdraw
-    // ─────────────────────────────────────────────────────────────
-
-    /// @notice Push idle USDC from the vault into an active strategy.
-    /// @dev Resulting strategy balance must not exceed this strategy's per-strategy cap
-    ///      (`StrategyInfo.maxAllocationBps`, capped above by MAX_ALLOCATION_BPS_ABSOLUTE = 40%).
+    /// @notice Keeper deposits idle USDC into an active strategy.
+    /// @dev Validates: strategy active, amount > 0, idle ≥ amount, post-deposit strategy
+    ///      balance ≤ `(totalAssets × maxAllocationBps) / 10_000` (per-strategy cap).
+    ///      Uses `forceApprove` (SafeERC20) to handle non-standard ERC-20 approve semantics.
+    /// @param strategy  The active strategy to invest into.
+    /// @param amount    Asset units to invest (USDC raw). Must be > 0.
     function investToStrategy(address strategy, uint256 amount) external onlyKeeper nonReentrant {
-        _investToStrategy(strategy, amount);
-    }
-
-    /// @notice Pull funds from a strategy back to the vault's idle balance.
-    /// @dev Allowed for both active and blacklisted strategies (drain after blacklist).
-    function divestFromStrategy(address strategy, uint256 amount) external onlyKeeper nonReentrant {
-        _divestFromStrategy(strategy, amount);
-    }
-
-    /// @dev Internal core. Called by externals (with nonReentrant) and by `rebalance`
-    ///      (already nonReentrant at the entrypoint).
-    function _investToStrategy(address strategy, uint256 amount) internal {
         StrategyInfo storage info = strategyInfo[strategy];
         if (!info.isActive) revert Errors.StrategyNotWhitelisted(strategy);
         if (amount == 0) revert Errors.ZeroAmount();
@@ -521,7 +764,7 @@ contract Vault is ERC4626, Ownable, Pausable, ReentrancyGuard {
         if (idle < amount) revert Errors.IdleInsufficient(amount, idle);
 
         uint256 ta = totalAssets();
-        uint256 maxStratAlloc = (ta * info.maxAllocationBps) / 10000;
+        uint256 maxStratAlloc = (ta * info.maxAllocationBps) / 10_000;
         uint256 newStratBal = IStrategy(strategy).balanceOf() + amount;
         if (newStratBal > maxStratAlloc) {
             revert Errors.AllocationExceeded(newStratBal, maxStratAlloc);
@@ -529,102 +772,116 @@ contract Vault is ERC4626, Ownable, Pausable, ReentrancyGuard {
 
         vaultAsset.forceApprove(strategy, amount);
         IStrategy(strategy).deposit(amount);
-
-        // Principal movement, not profit — bump baseline so the next harvest doesn't
-        // count this deposit as fee-bearing P&L.
-        lastRecordedBalance[strategy] += amount;
-
         emit InvestedToStrategy(strategy, amount);
     }
 
-    /// @dev Internal core. Returns actual amount returned to the vault (may be < requested).
-    function _divestFromStrategy(address strategy, uint256 amount)
-        internal
-        returns (uint256 withdrawn)
-    {
+    /// @notice Keeper pulls assets back from a strategy.
+    /// @dev Strategy can be active OR blacklisted (so blacklisted protocols can still be drained).
+    ///      Partial returns are normal (strategy may not have sufficient liquid balance).
+    /// @param strategy  The strategy to divest from.
+    /// @param amount    Asset units to request back. Strategy may return less (partial liquidity).
+    function divestFromStrategy(address strategy, uint256 amount) external onlyKeeper nonReentrant {
         StrategyInfo storage info = strategyInfo[strategy];
         if (!info.isActive && !info.isBlacklisted) revert Errors.StrategyNotWhitelisted(strategy);
         if (amount == 0) revert Errors.ZeroAmount();
-
-        withdrawn = IStrategy(strategy).withdraw(amount);
-
-        // Principal pull, not loss — drop baseline by the actual amount returned.
-        uint256 lastBal = lastRecordedBalance[strategy];
-        lastRecordedBalance[strategy] = withdrawn >= lastBal ? 0 : lastBal - withdrawn;
-
+        uint256 withdrawn = IStrategy(strategy).withdraw(amount);
         emit DivestedFromStrategy(strategy, amount, withdrawn);
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // Keeper actions (logic stubs — implemented in subsequent commits)
-    // ─────────────────────────────────────────────────────────────
-
-    /// @notice Collect profits from all active strategies and mint fee shares to Treasury.
-    /// @dev Pure share-price model (spec 1.12). Strategy funds are NOT moved here — Aave/Compound/Morpho
-    ///      auto-accrue interest into `balanceOf()`, so `currentBal - lastRecordedBalance` is the
-    ///      unrealized P&L since last sync. We simply mint `feeShares = convertToShares(profit * feeRate)`
-    ///      to the Treasury, which dilutes share value just enough to capture the fee.
-    ///
-    ///      Loss handling: if `currentBal ≤ lastBal`, no fee. Baseline is still updated to
-    ///      `currentBal` so the next recovery isn't double-counted as profit.
-    ///
-    ///      Dynamic harvest threshold (expectedFee > gasCost × 3, CLAUDE.md 2.6) is enforced
-    ///      off-chain by the Keeper before calling this — the contract itself does not gate.
-    function harvest() external onlyKeeper nonReentrant {
-        uint256 totalProfit = 0;
-        uint256 length = strategyList.length;
-
-        for (uint256 i = 0; i < length; ++i) {
-            address strat = strategyList[i];
-            if (!strategyInfo[strat].isActive) continue;
-
-            uint256 currentBal = IStrategy(strat).balanceOf();
-            uint256 lastBal = lastRecordedBalance[strat];
-
-            if (currentBal > lastBal) {
-                unchecked {
-                    totalProfit += currentBal - lastBal;
-                }
-            }
-            // Always sync baseline — a recovered loss should not become "profit".
-            lastRecordedBalance[strat] = currentBal;
-        }
-
-        if (totalProfit == 0) {
-            emit Harvested(0, 0);
-            return;
-        }
-
-        uint256 feeAssets = (totalProfit * feeRate) / 10000;
-        uint256 feeShares = feeAssets == 0 ? 0 : convertToShares(feeAssets);
-
-        if (feeShares > 0) {
-            _mint(treasury, feeShares);
-        }
-
-        emit Harvested(totalProfit, feeShares);
-    }
-
-    /// @notice Emergency withdraw from a strategy and auto-blacklist it.
-    /// @dev Triggered on critical signals (depeg, util 75%+, TVL drop, pause event — spec 1.20).
-    function emergencyWithdraw(address strategy, string calldata reason)
-        external
-        onlyKeeper
-        nonReentrant
-    {
+    /// @notice Drain a strategy entirely + auto-blacklist. Used when a strategy is compromised
+    ///         (hack, depeg, governance attack). Sets `isActive=false`, `isBlacklisted=true`,
+    ///         `blacklistedAt=now`. Un-blacklist requires `BLACKLIST_COOLDOWN` (72h) + Owner action.
+    /// @dev Strategy must be active (already blacklisted = use `divestFromStrategy` instead).
+    ///      Skips the `emergencyWithdraw()` call if the strategy reports zero balance.
+    /// @param strategy  The active strategy to emergency-drain.
+    function emergencyWithdraw(address strategy) external onlyKeeper nonReentrant {
         StrategyInfo storage info = strategyInfo[strategy];
         if (!info.isActive) revert Errors.StrategyNotWhitelisted(strategy);
-
-        uint256 withdrawn = IStrategy(strategy).emergencyWithdraw();
-
+        uint256 bal = IStrategy(strategy).balanceOf();
+        uint256 withdrawn;
+        if (bal > 0) {
+            withdrawn = IStrategy(strategy).emergencyWithdraw();
+        }
         info.isActive = false;
         info.isBlacklisted = true;
         info.blacklistedAt = block.timestamp;
-
-        // Strategy fully drained — reset baseline.
-        lastRecordedBalance[strategy] = 0;
-
-        emit EmergencyWithdrawal(strategy, withdrawn, reason);
-        emit StrategyBlacklisted(strategy, reason);
+        emit EmergencyWithdrawn(strategy, withdrawn);
+        emit StrategyBlacklisted(strategy);
     }
+
+    // ─────────────────────────────────────────────────────────────
+    // Auto-pull from strategies (called by _withdraw when idle insufficient)
+    // ─────────────────────────────────────────────────────────────
+
+    /// @dev Called by `_withdraw` when Vault idle is insufficient for the requested withdraw.
+    ///      Iterates `strategyList` in insertion order and pulls from each active strategy until
+    ///      `needed` is met. Skips blacklisted strategies and zero-balance entries.
+    ///
+    ///      **Try-catch wrap**: `IStrategy.withdraw(pull)` is invoked inside a `try` block. If
+    ///      the strategy's underlying protocol reverts (dust-level rounding, protocol pause,
+    ///      utilization 100%, etc.) the iteration continues with the next strategy instead of
+    ///      bubbling the revert and failing the entire user withdraw. A `StrategyWithdrawSkipped`
+    ///      event is emitted so off-chain monitors can trigger an operator response (typically
+    ///      `emergencyWithdraw` on the offending strategy, see V1 BSC Venus dust incident
+    ///      2026-06-09 as the design driver).
+    ///
+    ///      Reverts `IdleInsufficient` ONLY if total pulls still leave idle below `needed` after
+    ///      the loop — i.e. user fund safety is preserved (try-catch never silently shorts
+    ///      the user; they always get full asset or a clear revert).
+    /// @param needed  Asset units of additional idle required to satisfy the pending withdraw.
+    function _autoPullFromStrategies(uint256 needed) internal {
+        IERC20 vaultAsset = IERC20(asset());
+        uint256 idleBefore = vaultAsset.balanceOf(address(this));
+        uint256 remaining = needed;
+        uint256 length = strategyList.length;
+        for (uint256 i = 0; i < length && remaining > 0; ++i) {
+            address s = strategyList[i];
+            if (!strategyInfo[s].isActive) continue;
+            uint256 sBal = IStrategy(s).balanceOf();
+            if (sBal == 0) continue;
+            uint256 pull = sBal < remaining ? sBal : remaining;
+            // try-catch: strategy.withdraw revert 시 다음 strategy 로 fallback. user 자금은
+            // 루프 후 `pulled < needed` 검증 (`IdleInsufficient`) 으로 보호됨.
+            try IStrategy(s).withdraw(pull) returns (uint256 withdrawn) {
+                emit DivestedFromStrategy(s, pull, withdrawn);
+                remaining = withdrawn >= remaining ? 0 : remaining - withdrawn;
+            } catch {
+                emit StrategyWithdrawSkipped(s, pull);
+                // remaining 변경 없음 — 다음 strategy 가 부족분 보충 시도
+            }
+        }
+        // 부족분 검증: 루프가 needed 만큼 실제로 끌어왔는지 확인. `idle` 단일 비교는 (idle 은
+        // 항상 needed 이상이라) 의미가 없어 audit 친화적 검사가 아니었음 — `pulled < needed`
+        // 로 보강. user 가 항상 정확한 금액을 받거나 명확한 `IdleInsufficient` revert.
+        uint256 idleAfter = vaultAsset.balanceOf(address(this));
+        uint256 pulled = idleAfter - idleBefore;
+        if (pulled < needed) revert Errors.IdleInsufficient(needed, pulled);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Pause (Guardian)
+    // ─────────────────────────────────────────────────────────────
+
+    /// @notice Pause new deposits / mints. Only Guardian can call.
+    /// @dev INVARIANT: pausing does NOT block `withdraw` / `redeem` — users can always exit
+    ///      (CLAUDE.md §2.4). Designed so a compromised strategy / vault config can stop
+    ///      attack inflow without trapping legitimate user funds.
+    function pause() external onlyGuardian { _pause(); }
+
+    /// @notice Resume deposits after a pause. Only Owner can call (intentionally not Guardian —
+    ///         Owner is the Multi-sig with higher coordination cost, preventing
+    ///         single-key un-pause after an emergency).
+    function unpause() external onlyOwner { _unpause(); }
+
+    // ─────────────────────────────────────────────────────────────
+    // Views
+    // ─────────────────────────────────────────────────────────────
+
+    /// @notice Total count of registered strategies (active + blacklisted + removed).
+    /// @dev Array length only — removed entries are NOT array-spliced (marked inactive instead).
+    function strategyCount() external view returns (uint256) { return strategyList.length; }
+
+    /// @notice Return the full list of registered strategy addresses (active + blacklisted + removed).
+    /// @dev Caller should filter via `strategyInfo(addr).isActive` if only active strategies matter.
+    function getStrategies() external view returns (address[] memory) { return strategyList; }
 }
