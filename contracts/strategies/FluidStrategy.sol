@@ -134,7 +134,8 @@ contract FluidStrategy is BaseStrategy {
     /// @param cycle             Reward cycle id.
     /// @param merkleProof       Merkle proof validating the cumulative claim.
     /// @param metadata          Distributor-specific extra data.
-    /// @param poolFee           UniV3 / PancakeV3 pool fee tier for FLUID/USDC.
+    /// @param swapPath          UniV3 / PancakeV3 multi-hop path (`FLUID || ... || USDC`).
+    ///                          Endpoints validated inside `_swapAndReinvest`.
     /// @param minOut            Minimum USDC out (slippage protection).
     /// @return claimed          FLUID amount transferred from the distributor.
     /// @return swapped          USDC received from the swap (= re-supplied into Fluid).
@@ -145,7 +146,7 @@ contract FluidStrategy is BaseStrategy {
         uint256 cycle,
         bytes32[] calldata merkleProof,
         bytes calldata metadata,
-        uint24 poolFee,
+        bytes calldata swapPath,
         uint256 minOut
     ) external onlyKeeper nonReentrant returns (uint256 claimed, uint256 swapped) {
         if (address(fluidDistributor) == address(0) || address(rewardToken) == address(0)) {
@@ -166,6 +167,6 @@ contract FluidStrategy is BaseStrategy {
         claimed = rewardToken.balanceOf(address(this)) - balBefore;
 
         if (claimed == 0) return (0, 0);
-        swapped = _swapAndReinvest(address(rewardToken), poolFee, claimed, minOut);
+        swapped = _swapAndReinvest(address(rewardToken), swapPath, claimed, minOut);
     }
 }

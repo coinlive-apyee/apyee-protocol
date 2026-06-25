@@ -132,11 +132,13 @@ contract VenusStrategy is BaseStrategy {
     ///         swap XVS → USDC, and re-mint vUSDC (auto-compound).
     /// @dev    No-ops gracefully if Comptroller / rewardToken were configured as
     ///         address(0) at deploy time, or if no XVS has accrued.
-    /// @param poolFee  PancakeV3 XVS/USDC pool fee tier (typically 2500 on BSC).
+    /// @param swapPath PancakeV3 multi-hop path bytes — `XVS || fee0 || mid1 || ... || USDC`.
+    ///                 Single-hop also expressible (43 bytes). Endpoints validated in
+    ///                 `_swapAndReinvest`.
     /// @param minOut   Minimum USDC out from the swap (slippage protection).
     /// @return claimed XVS pulled from the Comptroller.
     /// @return swapped USDC received from the swap (= re-minted as vUSDC).
-    function claimAndCompound(uint24 poolFee, uint256 minOut)
+    function claimAndCompound(bytes calldata swapPath, uint256 minOut)
         external
         onlyKeeper
         nonReentrant
@@ -153,6 +155,6 @@ contract VenusStrategy is BaseStrategy {
         claimed = rewardToken.balanceOf(address(this)) - balBefore;
 
         if (claimed == 0) return (0, 0);
-        swapped = _swapAndReinvest(address(rewardToken), poolFee, claimed, minOut);
+        swapped = _swapAndReinvest(address(rewardToken), swapPath, claimed, minOut);
     }
 }

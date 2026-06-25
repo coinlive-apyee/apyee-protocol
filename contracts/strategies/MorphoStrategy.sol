@@ -121,7 +121,8 @@ contract MorphoStrategy is BaseStrategy {
     /// @param rewardToken  ERC-20 reward to pull (MORPHO or curator-issued token).
     /// @param claimable    Cumulative claimable from the merkle leaf (Keeper off-chain).
     /// @param proof        Merkle proof validating `(strategy, reward, claimable)`.
-    /// @param poolFee      UniV3 pool fee tier for rewardToken/USDC swap.
+    /// @param swapPath     UniV3 multi-hop path (`rewardToken || ... || USDC`). Endpoints
+    ///                     validated inside `_swapAndReinvest`.
     /// @param minOut       Minimum USDC out (slippage protection).
     /// @return claimed     Reward amount actually transferred by the URD.
     /// @return swapped     USDC received from the swap (= re-deposited into MetaMorpho).
@@ -129,7 +130,7 @@ contract MorphoStrategy is BaseStrategy {
         address rewardToken,
         uint256 claimable,
         bytes32[] calldata proof,
-        uint24 poolFee,
+        bytes calldata swapPath,
         uint256 minOut
     ) external onlyKeeper nonReentrant returns (uint256 claimed, uint256 swapped) {
         if (address(urd) == address(0)) return (0, 0);
@@ -137,6 +138,6 @@ contract MorphoStrategy is BaseStrategy {
 
         claimed = urd.claim(address(this), rewardToken, claimable, proof);
         if (claimed == 0) return (0, 0);
-        swapped = _swapAndReinvest(rewardToken, poolFee, claimed, minOut);
+        swapped = _swapAndReinvest(rewardToken, swapPath, claimed, minOut);
     }
 }
