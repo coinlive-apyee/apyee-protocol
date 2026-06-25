@@ -6,6 +6,7 @@ import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {BaseStrategy} from "./BaseStrategy.sol";
+import {IFluidMerkleDistributor} from "../interfaces/external/IFluidMerkleDistributor.sol";
 import {Errors} from "../libraries/Errors.sol";
 
 /// @title FluidStrategy
@@ -27,11 +28,33 @@ contract FluidStrategy is BaseStrategy {
     /// @notice Fluid Lending fToken for the (chain, asset) pairing (e.g. mainnet fUSDC).
     IERC4626 public immutable fluidVault;
 
-    constructor(address vault_, address asset_, address fluidVault_, bytes32 strategyVersionHash_)
-        BaseStrategy(vault_, asset_, strategyVersionHash_)
+    /// @notice V2.1 (Soken F-04): Fluid MerkleDistributor for FLUID rewards.
+    ///         Ethereum: 0xF398E66B1273a34558AeBbEC550DccaF4AcC7714.
+    ///         The distributor's `claim` enforces `msg.sender == recipient`, which is why
+    ///         the strategy itself owns the claim entrypoint. `address(0)` opts out.
+    IFluidMerkleDistributor public immutable fluidDistributor;
+
+    /// @notice V2.1 (Soken F-04): FLUID reward token (Ethereum mainnet
+    ///         0x6f40d4A6237C257fff2dB00FA0510DeEECd303eb, formerly INST).
+    IERC20 public immutable rewardToken;
+
+    constructor(
+        address vault_,
+        address asset_,
+        address fluidVault_,
+        address fluidDistributor_,
+        address rewardToken_,
+        address dexRouter_,
+        bytes32 strategyVersionHash_
+    )
+        BaseStrategy(vault_, asset_, dexRouter_, strategyVersionHash_)
     {
         if (fluidVault_ == address(0)) revert Errors.ZeroAddress();
         fluidVault = IERC4626(fluidVault_);
+        // Both reward params may be address(0) — opt-out for tests / chains where the
+        // FLUID program is inactive (e.g. after the 2026-06-30 USDC/USDT rewards end date).
+        fluidDistributor = IFluidMerkleDistributor(fluidDistributor_);
+        rewardToken = IERC20(rewardToken_);
 
         // The fToken's underlying must equal what our Vault expects.
         address vAsset = IERC4626(fluidVault_).asset();
@@ -92,5 +115,57 @@ contract FluidStrategy is BaseStrategy {
     ///         via `lastRecordedBalance`.
     function harvestable() external pure override returns (uint256) {
         return 0;
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // V2.1 (Soken F-04) — Fluid FLUID merkle claim + auto-compound
+    // ─────────────────────────────────────────────────────────────
+
+    /// @notice Keeper-only: claim FLUID rewards from the Fluid MerkleDistributor for our
+    ///         fToken position, swap FLUID → USDC, and re-supply into Fluid.
+    /// @dev    The distributor enforces `msg.sender == recipient` — that's why this lives
+    ///         inside the strategy (rather than letting the Keeper call the distributor
+    ///         directly). `recipient` is hardcoded to `address(this)` so a malicious
+    ///         off-chain Keeper cannot redirect rewards elsewhere.
+    ///         No-ops gracefully if either reward address was set to 0 at deploy.
+    /// @param cumulativeAmount  Cumulative claimable for this position (Keeper-supplied).
+    /// @param positionType      Distributor position-type discriminator.
+    /// @param positionId        Distributor position-id (typically the fToken address).
+    /// @param cycle             Reward cycle id.
+    /// @param merkleProof       Merkle proof validating the cumulative claim.
+    /// @param metadata          Distributor-specific extra data.
+    /// @param poolFee           UniV3 / PancakeV3 pool fee tier for FLUID/USDC.
+    /// @param minOut            Minimum USDC out (slippage protection).
+    /// @return claimed          FLUID amount transferred from the distributor.
+    /// @return swapped          USDC received from the swap (= re-supplied into Fluid).
+    function claimAndCompound(
+        uint256 cumulativeAmount,
+        uint8 positionType,
+        bytes32 positionId,
+        uint256 cycle,
+        bytes32[] calldata merkleProof,
+        bytes calldata metadata,
+        uint24 poolFee,
+        uint256 minOut
+    ) external onlyKeeper nonReentrant returns (uint256 claimed, uint256 swapped) {
+        if (address(fluidDistributor) == address(0) || address(rewardToken) == address(0)) {
+            return (0, 0);
+        }
+
+        uint256 balBefore = rewardToken.balanceOf(address(this));
+        // `recipient` MUST equal address(this) — distributor checks `msg.sender == recipient_`.
+        fluidDistributor.claim(
+            address(this),
+            cumulativeAmount,
+            positionType,
+            positionId,
+            cycle,
+            merkleProof,
+            metadata
+        );
+        claimed = rewardToken.balanceOf(address(this)) - balBefore;
+
+        if (claimed == 0) return (0, 0);
+        swapped = _swapAndReinvest(address(rewardToken), poolFee, claimed, minOut);
     }
 }

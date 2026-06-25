@@ -14,7 +14,8 @@ contract MockStrategy is BaseStrategy {
     bool public revertOnWithdraw;
 
     constructor(address vault_, address asset_)
-        BaseStrategy(vault_, asset_, keccak256(abi.encodePacked("mock")))
+        // dexRouter = address(0): mock opts out of reward-compound; helper would revert.
+        BaseStrategy(vault_, asset_, address(0), keccak256(abi.encodePacked("mock")))
     {
         _apy = 500; // 5% default
     }

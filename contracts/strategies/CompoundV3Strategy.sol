@@ -6,6 +6,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 
 import {BaseStrategy} from "./BaseStrategy.sol";
 import {IComet} from "../interfaces/external/IComet.sol";
+import {ICometRewards} from "../interfaces/external/ICometRewards.sol";
 import {Errors} from "../libraries/Errors.sol";
 
 /// @title CompoundV3Strategy
@@ -21,16 +22,30 @@ contract CompoundV3Strategy is BaseStrategy {
     /// @notice Compound V3 Comet contract for the (chain, base-asset) market.
     IComet public immutable comet;
 
+    /// @notice V2.1 (Soken F-04): Compound V3 reward distributor (CometRewards) for the
+    ///         chain. `address(0)` opts the strategy out of reward claiming — useful for
+    ///         tests / chains where Compound is not incentivized at deploy time.
+    ICometRewards public immutable cometRewards;
+
     /// @dev Compound V3 normalises rates to per-second × 1e18. Annualising and scaling to bps:
     ///        APR_bps = perSecondRate * SECONDS_PER_YEAR / 1e14
     uint256 private constant SECONDS_PER_YEAR = 365 days;
     uint256 private constant RATE_SCALE_TO_BPS = 1e14;
 
-    constructor(address vault_, address asset_, address comet_, bytes32 strategyVersionHash_)
-        BaseStrategy(vault_, asset_, strategyVersionHash_)
+    constructor(
+        address vault_,
+        address asset_,
+        address comet_,
+        address cometRewards_,
+        address dexRouter_,
+        bytes32 strategyVersionHash_
+    )
+        BaseStrategy(vault_, asset_, dexRouter_, strategyVersionHash_)
     {
         if (comet_ == address(0)) revert Errors.ZeroAddress();
         comet = IComet(comet_);
+        // cometRewards_ may be address(0) — see ICometRewards docstring (opt-out for non-incentivized chains).
+        cometRewards = ICometRewards(cometRewards_);
 
         // Comet's base asset must match what the Vault expects — otherwise supply would revert
         // late at runtime. Catch it at deploy.
@@ -85,5 +100,42 @@ contract CompoundV3Strategy is BaseStrategy {
     ///         so the strategy reports 0 ("no on-strategy harvest action needed").
     function harvestable() external pure override returns (uint256) {
         return 0;
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // V2.1 (Soken F-04) — reward claim + auto-compound
+    // ─────────────────────────────────────────────────────────────
+
+    /// @notice Keeper-only: claim accrued COMP rewards from the Comet distributor, swap
+    ///         to USDC via the configured DEX, and re-deposit into Compound (auto-compound).
+    ///         The resulting `balanceOf()` growth flows into Vault.totalAssets() and the
+    ///         streaming fee captures the operator's 15% share automatically on the next
+    ///         user action.
+    /// @dev    Caller is the current Vault keeper (read dynamically — see BaseStrategy.onlyKeeper).
+    ///         If `cometRewards` is unset (address(0)) or no COMP has accrued, the call
+    ///         is a no-op (no revert) so the Keeper bot can probe cheaply.
+    /// @param poolFee  UniV3 COMP/USDC pool fee tier (10000 = 1% on Ethereum mainnet).
+    /// @param minOut   Minimum USDC out from the swap (slippage protection, Keeper-computed).
+    /// @return claimed Amount of reward tokens pulled from the distributor.
+    /// @return swapped Amount of USDC received from the swap (= re-deposited into Compound).
+    function claimAndCompound(uint24 poolFee, uint256 minOut)
+        external
+        onlyKeeper
+        nonReentrant
+        returns (uint256 claimed, uint256 swapped)
+    {
+        if (address(cometRewards) == address(0)) return (0, 0);
+
+        // Reward token is configured on the distributor per Comet market — read so we don't
+        // hardcode COMP (forward-compat with reward-token migrations).
+        (address rewardToken, , ) = cometRewards.rewardConfig(address(comet));
+        if (rewardToken == address(0)) return (0, 0);
+
+        uint256 balBefore = IERC20(rewardToken).balanceOf(address(this));
+        cometRewards.claim(address(comet), address(this), true);
+        claimed = IERC20(rewardToken).balanceOf(address(this)) - balBefore;
+
+        if (claimed == 0) return (0, 0);
+        swapped = _swapAndReinvest(rewardToken, poolFee, claimed, minOut);
     }
 }
