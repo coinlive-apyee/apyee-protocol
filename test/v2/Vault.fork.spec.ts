@@ -96,21 +96,30 @@ describeFork("VaultV2 Lifecycle — Mainnet Fork (Ethereum, Balanced tier)", fun
     const vaultAddr = await vault.getAddress();
 
     // Deploy 3 strategies (Aave / Compound / Morpho) — use V1 adapter code (V2 reuses).
+    // V2.1 (Soken F-04): extra constructor args for reward distributors + dexRouter; fork
+    // spec opts out (ZeroAddress) so the claim path is dormant — invest/withdraw/balanceOf
+    // semantics under test are unaffected.
     const Aave = await ethers.getContractFactory("AaveV3Strategy");
     const aaveStrat = await Aave.deploy(
-      vaultAddr, USDC, AAVE_V3_POOL, A_USDC, V2_VERSION_HASHES.devBalanced,
+      vaultAddr, USDC, AAVE_V3_POOL, A_USDC,
+      ethers.ZeroAddress, ethers.ZeroAddress, ethers.ZeroAddress,
+      V2_VERSION_HASHES.devBalanced,
     );
     await aaveStrat.waitForDeployment();
 
     const Compound = await ethers.getContractFactory("CompoundV3Strategy");
     const compoundStrat = await Compound.deploy(
-      vaultAddr, USDC, COMET_USDC, V2_VERSION_HASHES.devBalanced,
+      vaultAddr, USDC, COMET_USDC,
+      ethers.ZeroAddress, ethers.ZeroAddress,
+      V2_VERSION_HASHES.devBalanced,
     );
     await compoundStrat.waitForDeployment();
 
     const Morpho = await ethers.getContractFactory("MorphoStrategy");
     const morphoStrat = await Morpho.deploy(
-      vaultAddr, USDC, STEAKHOUSE_USDC, V2_VERSION_HASHES.devBalanced,
+      vaultAddr, USDC, STEAKHOUSE_USDC,
+      ethers.ZeroAddress, ethers.ZeroAddress,
+      V2_VERSION_HASHES.devBalanced,
     );
     await morphoStrat.waitForDeployment();
 

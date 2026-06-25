@@ -153,10 +153,11 @@ describe("VaultV2", () => {
       // sp_now = TA * 1e18 / TS
       const spNow = (taBefore * ACCRUE_PRECISION) / tsBefore;
 
-      // feeAssets = TA * (sp_now - lastSp) * feeRate / (lastSp * 10000)
+      // V2.1 (F-03 fix): fee base is realized profit (TS × Δsp / 1e18), not post-yield TA.
+      //   feeAssets = TS * (sp_now - lastSp) * feeRate / (1e18 * 10_000)
       const feeAssetsExpected =
-        (taBefore * (spNow - lastSp) * BigInt(DEFAULT_FEE_RATE)) /
-        (lastSp * 10_000n);
+        (tsBefore * (spNow - lastSp) * BigInt(DEFAULT_FEE_RATE)) /
+        (ACCRUE_PRECISION * 10_000n);
 
       // feeShares = feeAssets * TS / (TA - feeAssets)
       const feeSharesExpected =
@@ -297,9 +298,10 @@ describe("VaultV2", () => {
       const taBefore = await vault.totalAssets();
       const lastSp = await vault.lastSharePrice();
       const spNow = (taBefore * ACCRUE_PRECISION) / tsBefore;
+      // V2.1 (F-03 fix): fee base is realized profit (TS × Δsp / 1e18), not post-yield TA.
       const feeAssetsExpected =
-        (taBefore * (spNow - lastSp) * BigInt(DEFAULT_FEE_RATE)) /
-        (lastSp * 10_000n);
+        (tsBefore * (spNow - lastSp) * BigInt(DEFAULT_FEE_RATE)) /
+        (ACCRUE_PRECISION * 10_000n);
       const feeSharesExpected =
         (feeAssetsExpected * tsBefore) / (taBefore - feeAssetsExpected);
 

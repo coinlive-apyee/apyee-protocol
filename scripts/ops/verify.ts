@@ -120,7 +120,7 @@ async function main() {
     const ctorArgs: unknown[] = [
       record.contracts.vault!,
       config.usdc.address,
-      ...constructorArgsFor(entry),
+      ...constructorArgsFor(entry, config),
       record.config.versionHash, // strategy_version_hash_ matches Vault.VERSION_HASH for same generation
     ];
     await verifyOne(label, addr, ctorArgs);

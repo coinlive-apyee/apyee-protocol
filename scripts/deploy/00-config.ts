@@ -40,26 +40,48 @@ export interface AaveStrategyEntry extends BaseStrategyEntry {
   adapter: "AaveV3Strategy";
   pool: string;
   aUsdc: string;
+  /// V2.1 (Soken F-04) — RewardsController for the (chain, pool) variant. Spark and
+  /// Kinza fork-pools have their own controller distinct from Aave V3's. address(0)
+  /// opts out (no claim hook fires).
+  rewardsController?: string;
+  /// V2.1 (Soken F-04) — single reward token harvested by this Aave-family instance
+  /// (SPK for Spark, KINZA for Kinza, stkAAVE on chains where Aave V3 supplies are
+  /// actually incentivized). address(0) opts out.
+  rewardToken?: string;
 }
 
 export interface CompoundStrategyEntry extends BaseStrategyEntry {
   adapter: "CompoundV3Strategy";
   comet: string;
+  /// V2.1 (Soken F-04) — CometRewards distributor for the chain.
+  cometRewards?: string;
 }
 
 export interface MorphoStrategyEntry extends BaseStrategyEntry {
   adapter: "MorphoStrategy";
   metaMorpho: string;
+  /// V2.1 (Soken F-04) — Universal Rewards Distributor (URD). Multiple URDs may exist
+  /// per chain; we pin one per strategy instance. reward token + cumulative amount +
+  /// merkle proof are supplied per-call by the Keeper (off-chain).
+  urd?: string;
 }
 
 export interface VenusStrategyEntry extends BaseStrategyEntry {
   adapter: "VenusStrategy";
   vUsdc: string;
+  /// V2.1 (Soken F-04) — Venus Unitroller proxy (Comptroller).
+  comptroller?: string;
+  /// V2.1 (Soken F-04) — XVS reward token.
+  rewardToken?: string;
 }
 
 export interface FluidStrategyEntry extends BaseStrategyEntry {
   adapter: "FluidStrategy";
   fluidVault: string; // fUSDC address (ERC-4626 fToken)
+  /// V2.1 (Soken F-04) — Fluid MerkleDistributor. Enforces msg.sender == recipient.
+  fluidDistributor?: string;
+  /// V2.1 (Soken F-04) — FLUID reward token (formerly INST; same contract address).
+  rewardToken?: string;
 }
 
 export type StrategyEntry =
@@ -79,6 +101,13 @@ export interface ChainConfig {
   /// Named map of strategies to deploy + register on this chain.
   /// Order is determined by Object.keys insertion order (used for deploy + register order).
   strategies: Record<string, StrategyEntry>;
+
+  /// V2.1 (Soken F-04) — UniswapV3 SwapRouter02 on ETH / Base / Arb, PancakeV3 SmartRouter
+  /// on BSC. All four follow the same `exactInputSingle` shape (PancakeV3 is a UniV3 fork).
+  /// Used by every strategy adapter's `claimAndCompound` to swap protocol reward tokens
+  /// (COMP / XVS / SPK / MORPHO / FLUID) into the underlying asset before re-depositing.
+  /// Set to `ethers.ZeroAddress` to opt strategies on this chain out of compounding.
+  dexRouter?: string;
 
   /// ERC-4626 vault metadata + Soft Launch defaults.
   vault: {
@@ -158,11 +187,20 @@ export const CHAINS: Record<string, ChainConfig> = {
     displayName: "Ethereum",
     chainId: 1,
     usdc: { address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", decimals: 6 },
+    // V2.1 (Soken F-04): UniswapV3 SwapRouter02 — used by every adapter's claimAndCompound
+    // to swap reward tokens to USDC. Same address on ETH + Arbitrum.
+    dexRouter: "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
     strategies: {
       aave: {
         adapter: "AaveV3Strategy",
         pool: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
         aUsdc: "0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c",
+        // V2.1 (Soken F-04): Aave V3 RewardsController on Ethereum. The aUSDC market itself
+        // has no live reward emission today, so rewardToken is left address(0) and
+        // `claimAndCompound` no-ops. The controller address is kept populated so a future
+        // Aave program can be activated by re-deploying with rewardToken set.
+        rewardsController: "0x8164Cc65827dcFe994AB23944CBC90e0aa80bFcb",
+        rewardToken: ethers.ZeroAddress,
         display: "Aave V3",
         slug: "aave-v3",
         targetBps: 3000,
@@ -171,6 +209,10 @@ export const CHAINS: Record<string, ChainConfig> = {
       compound: {
         adapter: "CompoundV3Strategy",
         comet: "0xc3d688B66703497DAA19211EEdff47f25384cdc3",
+        // V2.1 (Soken F-04): Compound V3 CometRewards on Ethereum. The reward token (COMP)
+        // is read dynamically from `cometRewards.rewardConfig(comet)` at claim time, so we
+        // don't pin it here — forward-compatible with reward-token migrations.
+        cometRewards: "0x1B0e765F6224C21223AeA2af16c1C46E38885a40",
         display: "Compound V3",
         slug: "compound-v3",
         targetBps: 2500,
@@ -188,6 +230,10 @@ export const CHAINS: Record<string, ChainConfig> = {
         // (서로 다른 immutable Vault, 다른 user pool, 종목 cap 별도 적용) 라 단일 Vault 집중
         // 없음. SPEC.md 1.28.3 격리 주석 참조. Lowercase 는 strict EIP-55 skip.
         metaMorpho: "0xbeefff209270748ddd194831b3fa287a5386f5bc",
+        // V2.1 (Soken F-04): Morpho Universal Rewards Distributor on Ethereum.
+        // Reward token (MORPHO + curator tokens) is supplied per-call by the Keeper
+        // alongside the cumulative claim amount + merkle proof.
+        urd: "0x330eefa8a787552DC5cAd3C3cA644844B1E61Ddb",
         display: "Smokehouse USDC",
         slug: "smokehouse-usdc",
         targetBps: 2000,
@@ -199,6 +245,11 @@ export const CHAINS: Record<string, ChainConfig> = {
         adapter: "AaveV3Strategy",
         pool: "0xC13e21B648A5Ee794902342038FF3aDAB66BE987",
         aUsdc: "0x377C3bd93f2a2984E1E7bE6A5C22c525eD4A4815", // spUSDC, 6 dec
+        // V2.1 (Soken F-04): Spark has its own RewardsController distinct from Aave V3's.
+        // Currently set to address(0) pending confirmation of Spark's per-chain controller
+        // + SPK token availability. Verify against docs.spark.fi before activating.
+        rewardsController: ethers.ZeroAddress,
+        rewardToken: ethers.ZeroAddress,
         display: "Spark",
         slug: "spark",
         targetBps: 1500,
@@ -209,6 +260,12 @@ export const CHAINS: Record<string, ChainConfig> = {
       fluid: {
         adapter: "FluidStrategy",
         fluidVault: "0x9Fb7b4477576Fe5B32be4C1843aFB1e55F251B33", // fUSDC, 6 dec
+        // V2.1 (Soken F-04): Fluid MerkleDistributor + FLUID reward token (formerly INST,
+        // same contract address). USDC/USDT lending rewards officially end 2026-06-30 —
+        // after that date, claims still settle previously-cumulated rewards but no new
+        // emission accrues. Pinned regardless so any residual cumulative claim survives.
+        fluidDistributor: "0xF398E66B1273a34558AeBbEC550DccaF4AcC7714",
+        rewardToken: "0x6f40d4A6237C257fff2dB00FA0510DeEECd303eb",
         display: "Fluid",
         slug: "fluid",
         targetBps: 1500,
@@ -223,11 +280,17 @@ export const CHAINS: Record<string, ChainConfig> = {
     displayName: "Base",
     chainId: 8453,
     usdc: { address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", decimals: 6 },
+    // V2.1 (Soken F-04): UniswapV3 SwapRouter02 on Base.
+    dexRouter: "0x2626664c2603336E57B271c5C0b26F421741e481",
     strategies: {
       aave: {
         adapter: "AaveV3Strategy",
         pool: "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5",
         aUsdc: "0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB",
+        // V2.1 (Soken F-04): Aave V3 RewardsController on Base. The aUSDC market on Base
+        // has no active reward emission today; rewardToken pinned to address(0).
+        rewardsController: "0xf9cc4F0D883F1a1eb2c253bdb46c254Ca51E1F44",
+        rewardToken: ethers.ZeroAddress,
         display: "Aave V3",
         slug: "aave-v3",
         targetBps: 3000,
@@ -236,6 +299,8 @@ export const CHAINS: Record<string, ChainConfig> = {
       compound: {
         adapter: "CompoundV3Strategy",
         comet: "0xb125E6687d4313864e53df431d5425969c15Eb2F",
+        // V2.1 (Soken F-04): Compound V3 CometRewards on Base.
+        cometRewards: "0x123964802e6ABabBE1Bc9547D72Ef1B69B00A6b1",
         display: "Compound V3",
         slug: "compound-v3",
         targetBps: 2500,
@@ -246,6 +311,10 @@ export const CHAINS: Record<string, ChainConfig> = {
       morpho: {
         adapter: "MorphoStrategy",
         metaMorpho: "0xc1256ae5ff1cf2719d4937adb3bbccab2e00a2ca",
+        // V2.1 (Soken F-04): Morpho URD on Base (same canonical URD shape as Ethereum).
+        // Address pending confirmation from docs.morpho.org/addresses — leave as address(0)
+        // and re-deploy this strategy once verified. Keeper-side claim is no-op until then.
+        urd: ethers.ZeroAddress,
         display: "Moonwell Flagship USDC",
         slug: "moonwell-flagship-usdc",
         targetBps: 2000,
@@ -255,6 +324,12 @@ export const CHAINS: Record<string, ChainConfig> = {
       fluid: {
         adapter: "FluidStrategy",
         fluidVault: "0xf42f5795D9ac7e9D757dB633D693cD548Cfd9169", // fUSDC, 6 dec
+        // V2.1 (Soken F-04): Fluid distributor address on Base TBD — Fluid has expanded
+        // multi-chain but the per-chain distributor proxy needs explicit confirmation
+        // from github.com/Instadapp/fluid-contracts-public/deployments/base.
+        // Left as address(0); re-deploy with the verified address before activating.
+        fluidDistributor: ethers.ZeroAddress,
+        rewardToken: ethers.ZeroAddress,
         display: "Fluid",
         slug: "fluid",
         targetBps: 1500,
@@ -324,11 +399,16 @@ export const CHAINS: Record<string, ChainConfig> = {
     displayName: "Arbitrum",
     chainId: 42161,
     usdc: { address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", decimals: 6 }, // Native USDC
+    // V2.1 (Soken F-04): UniswapV3 SwapRouter02 on Arbitrum (same canonical address as ETH).
+    dexRouter: "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
     strategies: {
       aave: {
         adapter: "AaveV3Strategy",
         pool: "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
         aUsdc: "0x724dc807b04555b71ed48a6896b6F41593b8C637",
+        // V2.1 (Soken F-04): Aave V3 RewardsController on Arbitrum. No active emission today.
+        rewardsController: "0x929EC64c34a17401F460460D4B9390518E5B473e",
+        rewardToken: ethers.ZeroAddress,
         display: "Aave V3",
         slug: "aave-v3",
         targetBps: 3000,
@@ -337,6 +417,8 @@ export const CHAINS: Record<string, ChainConfig> = {
       compound: {
         adapter: "CompoundV3Strategy",
         comet: "0x9c4ec768c28520B50860ea7a15bd7213a9fF58bf",
+        // V2.1 (Soken F-04): Compound V3 CometRewards on Arbitrum.
+        cometRewards: "0x88730d254A2f7e6AC8388c3198aFd694bA9f7fae",
         display: "Compound V3",
         slug: "compound-v3",
         targetBps: 2500,
@@ -347,6 +429,8 @@ export const CHAINS: Record<string, ChainConfig> = {
       morpho: {
         adapter: "MorphoStrategy",
         metaMorpho: "0x7c574174da4b2be3f705c6244b4bfa0815a8b3ed",
+        // V2.1 (Soken F-04): Arbitrum Morpho URD pending confirmation — see Base note.
+        urd: ethers.ZeroAddress,
         display: "Gauntlet USDC Prime",
         slug: "gauntlet-usdc-prime",
         targetBps: 2000,
@@ -356,6 +440,9 @@ export const CHAINS: Record<string, ChainConfig> = {
       fluid: {
         adapter: "FluidStrategy",
         fluidVault: "0x1A996cb54bb95462040408C06122D45D6Cdb6096", // fUSDC, 6 dec
+        // V2.1 (Soken F-04): Arbitrum Fluid distributor address pending confirmation.
+        fluidDistributor: ethers.ZeroAddress,
+        rewardToken: ethers.ZeroAddress,
         display: "Fluid",
         slug: "fluid",
         targetBps: 1500,
@@ -371,10 +458,19 @@ export const CHAINS: Record<string, ChainConfig> = {
     chainId: 56,
     // Binance-Peg USDC has 18 decimals (different from Ethereum's 6) — share decimals → 24.
     usdc: { address: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d", decimals: 18 },
+    // V2.1 (Soken F-04): PancakeSwap V3 SmartRouter (UniV3-fork; same `exactInputSingle`
+    // shape). UniswapV3 is not natively deployed on BSC, so PancakeV3 is the canonical
+    // alternative for XVS/KINZA → USDC swaps.
+    dexRouter: "0x13f4EA83D0bd40E75C8222255bc855a974568Dd4",
     strategies: {
       venus: {
         adapter: "VenusStrategy",
         vUsdc: "0xeca88125a5adbe82614ffc12d0db554e2e2867c8",
+        // V2.1 (Soken F-04): Venus Comptroller (Unitroller proxy) + XVS reward token.
+        // BSC is the only chain where Venus is incentivized — XVS programs are actively
+        // ongoing per the Venus DAO emission schedule.
+        comptroller: "0xfD36E2c2a6789Db23113685031d7F16329158384",
+        rewardToken: "0xcF6BB5389c92Bdda8a3747Ddb454cB7a64626C63",
         display: "Venus",
         slug: "venus",
         targetBps: 3000,
@@ -387,6 +483,11 @@ export const CHAINS: Record<string, ChainConfig> = {
         adapter: "AaveV3Strategy",
         pool: "0x6807dc923806fE8Fd134338EABCA509979a7e0cB",
         aUsdc: "0x00901a076785e0906d1028c7d6372d247bec7d61", // aBnbUSDC, 18 dec
+        // V2.1 (Soken F-04): Aave V3 on BSC has no active reward emission for USDC supplies
+        // at deploy time. Both fields opt-out; re-deploy this strategy with the RewardsController
+        // pinned if Aave activates BSC USDC incentives later.
+        rewardsController: ethers.ZeroAddress,
+        rewardToken: ethers.ZeroAddress,
         display: "Aave V3",
         slug: "aave-v3",
         targetBps: 3000,
@@ -399,6 +500,11 @@ export const CHAINS: Record<string, ChainConfig> = {
         adapter: "AaveV3Strategy",
         pool: "0xcb0620b181140e57d1c0d8b724cde623ca963c8c",
         aUsdc: "0x26c8c9d74eAe6182316B30dE9ac60e2AdC9F4a04", // kUSDC, 18 dec
+        // V2.1 (Soken F-04): Kinza maintains its own RewardsController (Aave V3 fork) and
+        // may emit KINZA tokens periodically. Both pending confirmation — opt-out for the
+        // first V2.1 deploy; re-deploy once Kinza's program details are confirmed.
+        rewardsController: ethers.ZeroAddress,
+        rewardToken: ethers.ZeroAddress,
         display: "Kinza",
         slug: "kinza",
         targetBps: 1500,
@@ -411,6 +517,11 @@ export const CHAINS: Record<string, ChainConfig> = {
       fluid: {
         adapter: "FluidStrategy",
         fluidVault: "0xfE60462E93cee34319F48Cfc6AcFbc13c2882Df9", // fUSDC, 18 dec
+        // V2.1 (Soken F-04): BSC Fluid distributor + reward token pending confirmation.
+        // Fluid expanded to BSC after the official 2026-06-30 USDC/USDT reward end date,
+        // so even with the distributor pinned the cumulative claim may be zero.
+        fluidDistributor: ethers.ZeroAddress,
+        rewardToken: ethers.ZeroAddress,
         display: "Fluid",
         slug: "fluid",
         targetBps: 1500,
@@ -455,20 +566,51 @@ export function getChainConfig(networkName: string): ChainConfig {
   return c;
 }
 
-/// Adapter-specific constructor argument extractor. Returns the args beyond
-/// `(vaultAddress, assetAddress)` which every adapter receives.
-export function constructorArgsFor(entry: StrategyEntry): unknown[] {
+/// Adapter-specific constructor argument extractor. Returns the args between
+/// `(vaultAddress, assetAddress)` and `strategyVersionHash`, in the order required by each
+/// adapter's constructor.
+///
+/// V2.1 (Soken F-04): every adapter now takes a `dexRouter` argument (last position before
+/// `versionHash`). Adapters with protocol-specific reward distributors (Compound/Venus/Aave/
+/// Morpho/Fluid) take additional reward-related args before `dexRouter`. Missing optional
+/// fields default to `ethers.ZeroAddress` so the strategy deploys cleanly even on chains
+/// where rewards are not yet active — `claimAndCompound` no-ops in that state.
+///
+/// Layout (after vault, asset):
+///   AaveV3Strategy:    pool, aUsdc, rewardsController, rewardToken, dexRouter
+///   CompoundV3Strategy: comet, cometRewards, dexRouter
+///   MorphoStrategy:    metaMorpho, urd, dexRouter
+///   VenusStrategy:     vUsdc, comptroller, rewardToken, dexRouter
+///   FluidStrategy:     fluidVault, fluidDistributor, rewardToken, dexRouter
+export function constructorArgsFor(entry: StrategyEntry, chain: ChainConfig): unknown[] {
+  const dexRouter = chain.dexRouter ?? ethers.ZeroAddress;
   switch (entry.adapter) {
     case "AaveV3Strategy":
-      return [entry.pool, entry.aUsdc];
+      return [
+        entry.pool,
+        entry.aUsdc,
+        entry.rewardsController ?? ethers.ZeroAddress,
+        entry.rewardToken ?? ethers.ZeroAddress,
+        dexRouter,
+      ];
     case "CompoundV3Strategy":
-      return [entry.comet];
+      return [entry.comet, entry.cometRewards ?? ethers.ZeroAddress, dexRouter];
     case "MorphoStrategy":
-      return [entry.metaMorpho];
+      return [entry.metaMorpho, entry.urd ?? ethers.ZeroAddress, dexRouter];
     case "VenusStrategy":
-      return [entry.vUsdc];
+      return [
+        entry.vUsdc,
+        entry.comptroller ?? ethers.ZeroAddress,
+        entry.rewardToken ?? ethers.ZeroAddress,
+        dexRouter,
+      ];
     case "FluidStrategy":
-      return [entry.fluidVault];
+      return [
+        entry.fluidVault,
+        entry.fluidDistributor ?? ethers.ZeroAddress,
+        entry.rewardToken ?? ethers.ZeroAddress,
+        dexRouter,
+      ];
     default: {
       const _exhaustive: never = entry;
       return _exhaustive;

@@ -6,6 +6,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 
 import {BaseStrategy} from "./BaseStrategy.sol";
 import {IVToken} from "../interfaces/external/IVToken.sol";
+import {IVenusComptroller} from "../interfaces/external/IVenusComptroller.sol";
 import {Errors} from "../libraries/Errors.sol";
 
 /// @title VenusStrategy
@@ -22,6 +23,16 @@ contract VenusStrategy is BaseStrategy {
     /// @notice Venus vToken (vUSDC on BNB Chain).
     IVToken public immutable vToken;
 
+    /// @notice V2.1 (Soken F-04): Venus Comptroller (Unitroller proxy on BSC mainnet
+    ///         0xfD36E2c2a6789Db23113685031d7F16329158384). `claimVenus(holder, vTokens)`
+    ///         transfers accrued XVS to the strategy. Pass `address(0)` to opt out of claims.
+    IVenusComptroller public immutable comptroller;
+
+    /// @notice V2.1 (Soken F-04): XVS token (BSC mainnet 0xcF6BB5389c92Bdda8a3747Ddb454cB7a64626C63).
+    ///         Pinned at constructor time so `claimAndCompound` doesn't depend on a
+    ///         Comptroller view that could be migrated away mid-life.
+    IERC20 public immutable rewardToken;
+
     /// @dev BSC mainnet block time ≈ 3 seconds → ~10.5M blocks per year.
     ///      Adjusts as BSC block time evolves; off-chain consumers can re-derive precisely.
     uint256 private constant BLOCKS_PER_YEAR = 10_512_000;
@@ -32,11 +43,23 @@ contract VenusStrategy is BaseStrategy {
     /// @dev Per-block rate × BLOCKS_PER_YEAR / 1e14 → APR in bps.
     uint256 private constant RATE_SCALE_TO_BPS = 1e14;
 
-    constructor(address vault_, address asset_, address vToken_, bytes32 strategyVersionHash_)
-        BaseStrategy(vault_, asset_, strategyVersionHash_)
+    constructor(
+        address vault_,
+        address asset_,
+        address vToken_,
+        address comptroller_,
+        address rewardToken_,
+        address dexRouter_,
+        bytes32 strategyVersionHash_
+    )
+        BaseStrategy(vault_, asset_, dexRouter_, strategyVersionHash_)
     {
         if (vToken_ == address(0)) revert Errors.ZeroAddress();
         vToken = IVToken(vToken_);
+        // V2.1 — comptroller_ / rewardToken_ may be address(0) for tests / chains where
+        // Venus is not incentivized; `claimAndCompound` no-ops in that case.
+        comptroller = IVenusComptroller(comptroller_);
+        rewardToken = IERC20(rewardToken_);
 
         // Sanity-check at deploy: vToken's underlying must equal what the Vault expects.
         address vUnderlying = IVToken(vToken_).underlying();
@@ -99,5 +122,37 @@ contract VenusStrategy is BaseStrategy {
     ///         harvest action. Vault tracks profit via `lastRecordedBalance`.
     function harvestable() external pure override returns (uint256) {
         return 0;
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // V2.1 (Soken F-04) — XVS claim + auto-compound
+    // ─────────────────────────────────────────────────────────────
+
+    /// @notice Keeper-only: claim accrued XVS via Venus Comptroller for our vToken position,
+    ///         swap XVS → USDC, and re-mint vUSDC (auto-compound).
+    /// @dev    No-ops gracefully if Comptroller / rewardToken were configured as
+    ///         address(0) at deploy time, or if no XVS has accrued.
+    /// @param poolFee  PancakeV3 XVS/USDC pool fee tier (typically 2500 on BSC).
+    /// @param minOut   Minimum USDC out from the swap (slippage protection).
+    /// @return claimed XVS pulled from the Comptroller.
+    /// @return swapped USDC received from the swap (= re-minted as vUSDC).
+    function claimAndCompound(uint24 poolFee, uint256 minOut)
+        external
+        onlyKeeper
+        nonReentrant
+        returns (uint256 claimed, uint256 swapped)
+    {
+        if (address(comptroller) == address(0) || address(rewardToken) == address(0)) {
+            return (0, 0);
+        }
+
+        uint256 balBefore = rewardToken.balanceOf(address(this));
+        address[] memory vTokens = new address[](1);
+        vTokens[0] = address(vToken);
+        comptroller.claimVenus(address(this), vTokens);
+        claimed = rewardToken.balanceOf(address(this)) - balBefore;
+
+        if (claimed == 0) return (0, 0);
+        swapped = _swapAndReinvest(address(rewardToken), poolFee, claimed, minOut);
     }
 }

@@ -6,6 +6,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 
 import {BaseStrategy} from "./BaseStrategy.sol";
 import {IAaveV3Pool, AaveDataTypes} from "../interfaces/external/IAaveV3Pool.sol";
+import {IAaveRewardsController} from "../interfaces/external/IAaveRewardsController.sol";
 import {Errors} from "../libraries/Errors.sol";
 
 /// @title AaveV3Strategy
@@ -22,6 +23,17 @@ contract AaveV3Strategy is BaseStrategy {
     /// @notice aToken counterpart of the underlying (e.g. aEthUSDC). Balance grows with interest.
     IERC20 public immutable aToken;
 
+    /// @notice V2.1 (Soken F-04): Aave-family rewards distributor. Pinned per-instance:
+    ///         Aave V3 RewardsController for Aave pools, Spark's distributor for Spark,
+    ///         Kinza's controller for Kinza. `address(0)` opts out of claims.
+    IAaveRewardsController public immutable rewardsController;
+
+    /// @notice V2.1 (Soken F-04): single reward token to harvest (e.g. SPK for Spark pools,
+    ///         KINZA for Kinza). Aave V3 can in principle stream multiple per-asset rewards
+    ///         (e.g. stkAAVE + an ecosystem token); we pin one and accept that secondary
+    ///         tokens are left on the table — claim them via a future strategy redeploy.
+    IERC20 public immutable rewardToken;
+
     /// @dev RAY (1e27) → bps (1e4) conversion factor used in `currentAPY`.
     uint256 private constant RAY_TO_BPS_DIVISOR = 1e23;
 
@@ -34,11 +46,19 @@ contract AaveV3Strategy is BaseStrategy {
         address asset_,
         address aavePool_,
         address aToken_,
+        address rewardsController_,
+        address rewardToken_,
+        address dexRouter_,
         bytes32 strategyVersionHash_
-    ) BaseStrategy(vault_, asset_, strategyVersionHash_) {
+    ) BaseStrategy(vault_, asset_, dexRouter_, strategyVersionHash_) {
         if (aavePool_ == address(0) || aToken_ == address(0)) revert Errors.ZeroAddress();
         aavePool = IAaveV3Pool(aavePool_);
         aToken = IERC20(aToken_);
+        // V2.1 — both reward params may be address(0) for chains/pools where the Aave-family
+        // protocol is not incentivized (e.g. Aave V3 USDC on most chains today). `claimAndCompound`
+        // no-ops in that case.
+        rewardsController = IAaveRewardsController(rewardsController_);
+        rewardToken = IERC20(rewardToken_);
 
         // One-shot infinite approval so each `_deposit` skips the per-call approve.
         // Safe for trusted protocol contracts; Aave V3 Pool is immutable and audited.
@@ -95,5 +115,41 @@ contract AaveV3Strategy is BaseStrategy {
     ///         signal "no on-strategy harvest action needed".
     function harvestable() external pure override returns (uint256) {
         return 0;
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // V2.1 (Soken F-04) — Aave-family reward claim + auto-compound
+    // ─────────────────────────────────────────────────────────────
+
+    /// @notice Keeper-only: claim accrued `rewardToken` from the Aave RewardsController
+    ///         (Spark / Kinza variants share the same interface), swap to USDC, and
+    ///         re-supply into Aave (auto-compound).
+    /// @dev    No-ops when `rewardsController` or `rewardToken` was set to address(0)
+    ///         (intentional opt-out for non-incentivized chains).
+    /// @param poolFee  UniV3 pool fee tier for rewardToken/USDC.
+    /// @param minOut   Minimum USDC out (slippage protection, Keeper-computed).
+    /// @return claimed Reward amount transferred from the controller.
+    /// @return swapped USDC received (= re-supplied into Aave).
+    function claimAndCompound(uint24 poolFee, uint256 minOut)
+        external
+        onlyKeeper
+        nonReentrant
+        returns (uint256 claimed, uint256 swapped)
+    {
+        if (address(rewardsController) == address(0) || address(rewardToken) == address(0)) {
+            return (0, 0);
+        }
+
+        address[] memory assets = new address[](1);
+        assets[0] = address(aToken);
+        claimed = rewardsController.claimRewards(
+            assets,
+            type(uint256).max,
+            address(this),
+            address(rewardToken)
+        );
+
+        if (claimed == 0) return (0, 0);
+        swapped = _swapAndReinvest(address(rewardToken), poolFee, claimed, minOut);
     }
 }

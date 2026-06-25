@@ -25,9 +25,13 @@ async function deployOne(
   vaultAddr: string,
   asset: string,
   strategyVersionHash: string,
+  chain: ReturnType<typeof getChainConfig>,
 ): Promise<string> {
   const Factory = await ethers.getContractFactory(entry.adapter);
-  const extraArgs = constructorArgsFor(entry);
+  // V2.1 — constructorArgsFor now requires the chain config to inject the per-chain
+  // `dexRouter` (Soken F-04). Missing reward fields default to ethers.ZeroAddress, so
+  // strategies still deploy cleanly on chains where the reward program is dormant.
+  const extraArgs = constructorArgsFor(entry, chain);
   const contract = await Factory.deploy(
     vaultAddr,
     asset,
@@ -80,7 +84,7 @@ async function main() {
       console.log(`✓ ${entry.adapter.padEnd(20)} ${key.padEnd(10)} ${existing} (already deployed, skipping)`);
       continue;
     }
-    const addr = await deployOne(entry, vaultAddr, asset, strategyVersionHash);
+    const addr = await deployOne(entry, vaultAddr, asset, strategyVersionHash, config);
     console.log(`✓ ${entry.adapter.padEnd(20)} ${key.padEnd(10)} ${addr}`);
     console.log(`  display="${entry.display}"  slug="${entry.slug}"`);
     updateDeployment(network.name, (r) => {
@@ -100,7 +104,7 @@ async function main() {
       const ctorArgs: unknown[] = [
         vaultAddr,
         asset,
-        ...constructorArgsFor(entry),
+        ...constructorArgsFor(entry, config),
         strategyVersionHash,
       ];
       await verifyOne(`${entry.adapter} (${key})`, addr, ctorArgs);

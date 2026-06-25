@@ -1,11 +1,19 @@
 # Trust Model — What the Owner Can and Cannot Do
 
-> **TL;DR**: There is no function in `Vault.sol` that allows the Owner to
-> send user funds to an arbitrary address. The Owner can change parameters
-> and the whitelist; movement of assets requires the Keeper role and is
-> bounded by the whitelist. This document enumerates every privileged
-> function with line references so users can verify directly against the
-> source.
+> **TL;DR**: No NON-OWNER role (Keeper, Guardian, any unprivileged caller) can
+> move user principal to an arbitrary address. The Owner (Multi-sig) is a trusted
+> role that CAN, by combining `addStrategy(maliciousStrategy)` with `setKeeper(self)`
+> + `investToStrategy`, route principal through a self-supplied strategy — an
+> accepted centralization risk inherent to the trusted multi-sig.
+> This document enumerates every privileged function with line references so
+> users can verify directly against the source.
+>
+> V2.1 (Soken §F-16, 2026-06-25) corrected the previous "no privileged role can
+> move principal" phrasing to the precise non-owner guarantee above. The
+> centralization risk is intrinsic to ALL DeFi protocols with a multi-sig owner
+> (Yearn / Compound / Aave / MakerDAO all share it) and is mitigated by:
+> the m-of-n Safe threshold, the public `StrategyAdded` event, and the invariant
+> that user `withdraw()` is always open (even while paused).
 >
 > Source: [`contracts/Vault.sol`](../contracts/Vault.sol) at tag
 > [`v2.0.0`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v2.0.0).
@@ -56,6 +64,8 @@ Full enumeration of `onlyOwner` functions in `Vault.sol`:
 | `removeStrategy(address)` | 720 | De-whitelist a strategy | Strategy must report zero balance (forces full divest first) |
 | `unblacklistStrategy(address)` | 735 | Lift auto-blacklist | Requires `BLACKLIST_COOLDOWN` (72h) since `blacklistedAt` |
 | `unpause()` | 874 | Resume normal operation | — |
+| `setQuarantine(address, bool)` | 893 | V2.1 (Soken F-05) — exclude / restore a strategy from `totalAssets()` accounting | Strategy must be active or blacklisted. Quarantined strategies are also rejected by `investToStrategy`. Off-chain reconciliation required before flipping (share price will shift if the strategy still holds funds). |
+| `transferOwnership(address)` | inherited Ownable2Step | Queue new owner — recipient must call `acceptOwnership` to complete the transfer | V2.1 (Soken F-06) — two-step transfer rejects mistyped destinations |
 
 **Hard-coded ceilings** (immutable in bytecode, Owner cannot change):
 

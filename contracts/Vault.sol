@@ -7,6 +7,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
@@ -29,7 +30,7 @@ import {Errors} from "./libraries/Errors.sol";
 ///   5. Remove: `harvest()`, `Harvested` event, `lastRecordedBalance` mapping, baseline bumping
 ///      in `_invest` / `_divest` (irrelevant — fees now derive from share price, not strategy P&L)
 ///   6. Add: `FeesAccrued` event, `pendingFeeShares()` view (off-chain UX)
-contract VaultV2 is ERC4626, Ownable, Pausable, ReentrancyGuard {
+contract VaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
     using Math for uint256;
 
@@ -158,11 +159,19 @@ contract VaultV2 is ERC4626, Ownable, Pausable, ReentrancyGuard {
     /// @param isActive          True if Keeper may invest/divest into this strategy.
     /// @param isBlacklisted     True after `emergencyWithdraw` — blocks `invest`, allows `divest` only.
     /// @param blacklistedAt     Timestamp of the blacklist trigger (used for `BLACKLIST_COOLDOWN`).
+    /// @dev V2.1 (Soken F-05): `isQuarantined` is an Owner-controlled escape hatch that
+    ///      excludes a strategy from `totalAssets()` accounting without calling its
+    ///      `balanceOf()`. Used when an external protocol view path becomes unreachable
+    ///      (paused / exploited / migrated) and a naive try-catch return-0 would silently
+    ///      understate NAV. Quarantine **must** be paired with prior off-chain
+    ///      reconciliation of the strategy's real value — share price will jump on
+    ///      `setQuarantine(true)` if the strategy still holds funds.
     struct StrategyInfo {
         uint16 targetBps;
         uint16 maxAllocationBps;
         bool isActive;
         bool isBlacklisted;
+        bool isQuarantined;          // V2.1 — F-05 escape hatch (Owner-set)
         uint256 blacklistedAt;
     }
 
@@ -217,6 +226,12 @@ contract VaultV2 is ERC4626, Ownable, Pausable, ReentrancyGuard {
 
     /// @notice Per-strategy `maxAllocationBps` updated by Owner. Bounded by `MAX_ALLOCATION_BPS_ABSOLUTE`.
     event StrategyMaxAllocationUpdated(address indexed strategy, uint16 newMaxBps);
+
+    /// @notice V2.1 (F-05): Strategy excluded from / restored to `totalAssets()` accounting
+    ///         by Owner. Used when an external protocol view path becomes unreachable so the
+    ///         vault keeps serving deposits/withdrawals. Share price will jump if the
+    ///         strategy still holds funds — Owner must reconcile off-chain first.
+    event StrategyQuarantineUpdated(address indexed strategy, bool quarantined);
 
     /// @notice Keeper transferred `amount` of asset from Vault idle into strategy via `IStrategy.deposit`.
     event InvestedToStrategy(address indexed strategy, uint256 amount);
@@ -386,8 +401,13 @@ contract VaultV2 is ERC4626, Ownable, Pausable, ReentrancyGuard {
     ///              dilution-recovery be re-counted as new yield → double taxation.
     function _accrue() internal {
         if (lastAccruedAt == block.timestamp) return;   // same-block re-entry: skip
-        if (totalSupply() == 0) {                       // pre-first-deposit: just bump timestamp
+        if (totalSupply() == 0) {
+            // V2.1 — Soken F-17 remediation: clear baseline so the next deposit re-snaps to
+            // the fresh share price. Without this reset, a re-seeded vault carries a stale-positive
+            // `lastSharePrice` that triggers an enormous apparent jump on the next deposit and
+            // permanently bricks the vault on the FeeTooHigh guard at L#L435 below.
             lastAccruedAt = block.timestamp;
+            lastSharePrice = 0;
             return;
         }
 
@@ -412,14 +432,20 @@ contract VaultV2 is ERC4626, Ownable, Pausable, ReentrancyGuard {
             return;
         }
 
-        // [[2]] Compute feeAssets directly from sp delta (no profitBps intermediate)
-        //       feeAssets = TA × (sp - lastSp) × feeRate / (lastSp × 1e4)
-        uint256 ta = totalAssets();
-        uint256 feeAssets = ta.mulDiv(
+        // [[2]] Compute feeAssets from realized profit, not post-yield TA (Soken F-03 fix).
+        //       Old (over-charged): feeAssets = TA_now × g × feeRate / 1e4 = correct × (1+g)
+        //       New (exact):        feeAssets = TS × (sp - lastSp) / 1e18 × feeRate / 1e4
+        //                                     = realized profit × feeRate
+        //       The post-yield TA basis charged a multiplicative (1+g) over-tax (e.g. 16.5%
+        //       on a 10% gap at the 15% headline rate). The supply-at-baseline basis exactly
+        //       matches the marketed "X% of yield" semantics.
+        uint256 ts = totalSupply();
+        uint256 feeAssets = ts.mulDiv(
             (sp - lastSharePrice) * uint256(feeRate),
-            lastSharePrice * 10_000,
+            ACCRUE_PRECISION * 10_000,
             Math.Rounding.Floor
         );
+        uint256 ta = totalAssets();
 
         if (feeAssets == 0) {
             // Sub-wei profit / extreme dust — skip mint, bump baseline + timestamp
@@ -435,7 +461,6 @@ contract VaultV2 is ERC4626, Ownable, Pausable, ReentrancyGuard {
         }
 
         // [[3]] Correct dilutive share-mint: shares such that minted value = feeAssets after dilution
-        uint256 ts = totalSupply();
         uint256 feeShares = feeAssets.mulDiv(ts, ta - feeAssets, Math.Rounding.Floor);
 
         /* istanbul ignore next — Math.mulDiv(Floor) of a positive numerator can in theory
@@ -468,15 +493,18 @@ contract VaultV2 is ERC4626, Ownable, Pausable, ReentrancyGuard {
 
     /// @dev Compute would-mint fee shares for a hypothetical post-yield share price `sp`.
     ///      Used by view function `pendingFeeShares` — not by `_accrue` (which inlines for clarity).
+    /// @dev V2.1 — Soken F-03: identical formula change as `_accrue`. fee base is
+    ///      totalSupply × (sp - lastSharePrice) / 1e18 (= realized profit), not post-yield TA.
     function _feeSharesFor(uint256 sp) internal view returns (uint256) {
-        uint256 ta = totalAssets();
-        uint256 feeAssets = ta.mulDiv(
+        uint256 ts = totalSupply();
+        uint256 feeAssets = ts.mulDiv(
             (sp - lastSharePrice) * uint256(feeRate),
-            lastSharePrice * 10_000,
+            ACCRUE_PRECISION * 10_000,
             Math.Rounding.Floor
         );
+        uint256 ta = totalAssets();
         if (feeAssets == 0 || feeAssets >= ta) return 0;
-        return feeAssets.mulDiv(totalSupply(), ta - feeAssets, Math.Rounding.Floor);
+        return feeAssets.mulDiv(ts, ta - feeAssets, Math.Rounding.Floor);
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -525,31 +553,53 @@ contract VaultV2 is ERC4626, Ownable, Pausable, ReentrancyGuard {
             _autoPullFromStrategies(assets - idle);
         }
         super._withdraw(caller, receiver, owner, assets, shares);
+
+        // V2.1 — Soken F-17 remediation: if the last share exited, clear the baseline so a
+        // re-seeding deposit lands on the lazy-init path (`if (lastSharePrice == 0)` in `_deposit`)
+        // and re-snaps to the fresh price instead of detonating the FeeTooHigh guard via a
+        // stale-positive baseline.
+        if (totalSupply() == 0) {
+            lastSharePrice = 0;
+        }
     }
 
     /// @inheritdoc ERC4626
     /// @dev Wraps with `nonReentrant` + `whenNotPaused`. Per-user / Vault caps enforced inside `_deposit`.
     function deposit(uint256 assets, address receiver) public override nonReentrant whenNotPaused returns (uint256) {
+        // V2.1 (Soken F-01): accrue BEFORE OpenZeppelin prices the share count.
+        // `super.deposit` calls `previewDeposit(assets)` first; without this hook the
+        // pending fee mint would inflate `totalSupply()` *after* pricing, leaving the
+        // depositor with fewer shares than their assets are worth post-accrue.
+        // `_deposit` calls `_accrue()` again — the lastAccruedAt same-block guard makes
+        // the second call a no-op (defence in depth).
+        _accrue();
         return super.deposit(assets, receiver);
     }
 
     /// @inheritdoc ERC4626
     /// @dev Wraps with `nonReentrant` + `whenNotPaused`. Mints `shares` to `receiver` by converting assets.
     function mint(uint256 shares, address receiver) public override nonReentrant whenNotPaused returns (uint256) {
+        // V2.1 (Soken F-01): see `deposit` rationale — accrue before pricing.
+        _accrue();
         return super.mint(shares, receiver);
     }
 
     /// @inheritdoc ERC4626
     /// @dev Withdraw is ALWAYS allowed, even when paused (CLAUDE.md §2.4 invariant). Auto-pulls from
-    ///      strategies via `_autoPullFromStrategies` if idle is short. `_accrue()` runs first
-    ///      via `_withdraw` hook so the withdrawal price is fee-correct.
+    ///      strategies via `_autoPullFromStrategies` if idle is short.
+    /// @dev V2.1 (Soken F-01): accrue BEFORE `previewWithdraw` (which super calls). Without
+    ///      this, the withdrawer burns fewer shares than the post-accrue ratio requires
+    ///      and over-extracts at remaining holders' expense.
     function withdraw(uint256 assets, address receiver, address owner) public override nonReentrant returns (uint256) {
+        _accrue();
         return super.withdraw(assets, receiver, owner);
     }
 
     /// @inheritdoc ERC4626
     /// @dev Same invariants as `withdraw`. Burns `shares` and returns the corresponding assets.
     function redeem(uint256 shares, address receiver, address owner) public override nonReentrant returns (uint256) {
+        // V2.1 (Soken F-01): accrue before pricing — see `withdraw` rationale.
+        _accrue();
         return super.redeem(shares, receiver, owner);
     }
 
@@ -584,9 +634,14 @@ contract VaultV2 is ERC4626, Ownable, Pausable, ReentrancyGuard {
         uint256 sum;
         for (uint256 i = 0; i < length; ++i) {
             address s = strategyList[i];
-            if (strategyInfo[s].isActive || strategyInfo[s].isBlacklisted) {
-                sum += IStrategy(s).balanceOf();
-            }
+            StrategyInfo storage info = strategyInfo[s];
+            if (!info.isActive && !info.isBlacklisted) continue;
+            // V2.1 (Soken F-05): Owner-controlled escape hatch. A quarantined strategy is
+            // excluded from accounting so a reverting external view (paused / exploited
+            // / migrated underlying protocol) cannot freeze the entire ERC-4626 surface.
+            // See `setQuarantine` for invariants and the off-chain reconciliation requirement.
+            if (info.isQuarantined) continue;
+            sum += IStrategy(s).balanceOf();
         }
         return idle + sum;
     }
@@ -713,9 +768,11 @@ contract VaultV2 is ERC4626, Ownable, Pausable, ReentrancyGuard {
     }
 
     /// @notice Permanently remove a strategy. Only Owner. Strategy must have **zero balance**
-    ///         (Keeper should `divestFromStrategy` everything first). Strategy stays in
-    ///         `strategyList` (not array-removed) but is marked inactive — `totalAssets()`
-    ///         no longer sums its balance.
+    ///         (Keeper should `divestFromStrategy` everything first).
+    /// @dev V2.1 — Soken F-02/F-07 remediation: the address is now swap-and-popped out of
+    ///      `strategyList` as well as marked inactive. Without the array removal, a later
+    ///      re-add (which only checks `isActive || isBlacklisted`) would create a duplicate
+    ///      entry and `totalAssets()` would double-count the strategy's balance.
     /// @param strategy  The strategy address to remove.
     function removeStrategy(address strategy) external onlyOwner {
         StrategyInfo storage info = strategyInfo[strategy];
@@ -725,6 +782,19 @@ contract VaultV2 is ERC4626, Ownable, Pausable, ReentrancyGuard {
         info.isActive = false;
         info.isBlacklisted = false;
         info.targetBps = 0;
+
+        // Swap-and-pop `strategy` out of `strategyList` (F-02/F-07).
+        uint256 length = strategyList.length;
+        for (uint256 i = 0; i < length; ++i) {
+            if (strategyList[i] == strategy) {
+                if (i != length - 1) {
+                    strategyList[i] = strategyList[length - 1];
+                }
+                strategyList.pop();
+                break;
+            }
+        }
+
         emit StrategyRemoved(strategy);
     }
 
@@ -744,6 +814,31 @@ contract VaultV2 is ERC4626, Ownable, Pausable, ReentrancyGuard {
         emit StrategyUnblacklisted(strategy);
     }
 
+    /// @notice V2.1 (Soken F-05): Owner-controlled accounting escape hatch. Excludes a
+    ///         strategy from `totalAssets()` and `_autoPullFromStrategies` without calling
+    ///         its `balanceOf()` / `withdraw()`. Use when the strategy's external view path
+    ///         is unreachable (paused / exploited / migrated) so the vault keeps serving
+    ///         deposits and withdrawals on the remaining strategies + idle.
+    /// @dev    The strategy must already be registered (active or blacklisted). Quarantine
+    ///         is intentionally orthogonal to active/blacklisted: an active-and-quarantined
+    ///         strategy can be unquarantined to resume invest/divest, and a blacklisted
+    ///         strategy can be quarantined to prevent its `balanceOf` from gating
+    ///         `totalAssets()` after `emergencyWithdraw` failed.
+    ///
+    ///         ⚠ Setting `quarantined=true` removes the strategy's value from the share
+    ///         price; off-chain reconciliation MUST confirm the residual on-chain balance
+    ///         before quarantining (otherwise users entering after the quarantine pay below
+    ///         the true price and existing holders take the loss). Clearing `quarantined=false`
+    ///         when the protocol recovers similarly re-introduces the balance, lifting sp.
+    /// @param strategy     The strategy to quarantine or restore.
+    /// @param quarantined  True = exclude from accounting; False = include.
+    function setQuarantine(address strategy, bool quarantined) external onlyOwner {
+        StrategyInfo storage info = strategyInfo[strategy];
+        if (!info.isActive && !info.isBlacklisted) revert Errors.StrategyNotWhitelisted(strategy);
+        info.isQuarantined = quarantined;
+        emit StrategyQuarantineUpdated(strategy, quarantined);
+    }
+
     // ─────────────────────────────────────────────────────────────
     // Keeper actions — invest/divest (no fee logic; fees come from share price tracking)
     // ─────────────────────────────────────────────────────────────
@@ -757,6 +852,10 @@ contract VaultV2 is ERC4626, Ownable, Pausable, ReentrancyGuard {
     function investToStrategy(address strategy, uint256 amount) external onlyKeeper nonReentrant {
         StrategyInfo storage info = strategyInfo[strategy];
         if (!info.isActive) revert Errors.StrategyNotWhitelisted(strategy);
+        // V2.1 (Soken F-05): block invest into a quarantined strategy — quarantine signals
+        // the underlying protocol view path is broken, so new principal would be unrecoverable
+        // until quarantine clears.
+        if (info.isQuarantined) revert Errors.StrategyNotWhitelisted(strategy);
         if (amount == 0) revert Errors.ZeroAmount();
 
         IERC20 vaultAsset = IERC20(asset());
@@ -836,7 +935,13 @@ contract VaultV2 is ERC4626, Ownable, Pausable, ReentrancyGuard {
         uint256 length = strategyList.length;
         for (uint256 i = 0; i < length && remaining > 0; ++i) {
             address s = strategyList[i];
-            if (!strategyInfo[s].isActive) continue;
+            StrategyInfo storage info = strategyInfo[s];
+            if (!info.isActive) continue;
+            // V2.1 (Soken F-05): skip quarantined strategies — their `balanceOf` /
+            // `withdraw` view path is unreachable and would revert the whole user withdraw.
+            // User funds in a quarantined strategy are only recoverable after Owner clears
+            // the quarantine flag (typically post external-protocol fix or migration).
+            if (info.isQuarantined) continue;
             uint256 sBal = IStrategy(s).balanceOf();
             if (sBal == 0) continue;
             uint256 pull = sBal < remaining ? sBal : remaining;
@@ -872,6 +977,20 @@ contract VaultV2 is ERC4626, Ownable, Pausable, ReentrancyGuard {
     ///         Owner is the Multi-sig with higher coordination cost, preventing
     ///         single-key un-pause after an emergency).
     function unpause() external onlyOwner { _unpause(); }
+
+    // ─────────────────────────────────────────────────────────────
+    // Ownership (V2.1 — Soken F-06 remediation)
+    // ─────────────────────────────────────────────────────────────
+
+    /// @notice Disabled — an immutable yield vault must never be ownerless.
+    /// @dev Soken F-06: stock `Ownable.renounceOwnership()` would permanently freeze
+    ///      every privileged setter, including `unpause()`, with no on-chain recovery.
+    ///      Ownership transfer uses the inherited two-step `Ownable2Step` flow
+    ///      (`transferOwnership` → `acceptOwnership`), which protects against
+    ///      mistyped destinations by requiring the new owner to actively accept.
+    function renounceOwnership() public view override onlyOwner {
+        revert("Ownable2Step: renounceOwnership disabled");
+    }
 
     // ─────────────────────────────────────────────────────────────
     // Views
