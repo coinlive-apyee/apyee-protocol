@@ -126,11 +126,12 @@ contract AaveV3Strategy is BaseStrategy {
     ///         re-supply into Aave (auto-compound).
     /// @dev    No-ops when `rewardsController` or `rewardToken` was set to address(0)
     ///         (intentional opt-out for non-incentivized chains).
-    /// @param poolFee  UniV3 pool fee tier for rewardToken/USDC.
+    /// @param swapPath UniV3 multi-hop path bytes (`rewardToken || ... || USDC`). Endpoints
+    ///                 validated in `_swapAndReinvest`. Single-hop = 43 bytes.
     /// @param minOut   Minimum USDC out (slippage protection, Keeper-computed).
     /// @return claimed Reward amount transferred from the controller.
     /// @return swapped USDC received (= re-supplied into Aave).
-    function claimAndCompound(uint24 poolFee, uint256 minOut)
+    function claimAndCompound(bytes calldata swapPath, uint256 minOut)
         external
         onlyKeeper
         nonReentrant
@@ -150,6 +151,6 @@ contract AaveV3Strategy is BaseStrategy {
         );
 
         if (claimed == 0) return (0, 0);
-        swapped = _swapAndReinvest(address(rewardToken), poolFee, claimed, minOut);
+        swapped = _swapAndReinvest(address(rewardToken), swapPath, claimed, minOut);
     }
 }

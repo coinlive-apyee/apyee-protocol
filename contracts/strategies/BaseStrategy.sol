@@ -220,14 +220,18 @@ abstract contract BaseStrategy is IStrategy, ReentrancyGuard {
     ///         The resulting `balanceOf()` growth flows into Vault.totalAssets() and the
     ///         streaming fee captures the operator's 15% share automatically on the next
     ///         user action — no explicit fee handling here.
-    /// @param rewardToken  ERC-20 reward token (e.g. COMP). Must not equal underlyingAsset.
-    /// @param poolFee      UniV3 pool fee tier (500 / 3000 / 10000).
+    /// @param rewardToken  ERC-20 reward token (e.g. COMP). Must not equal underlyingAsset
+    ///                     and must match the FIRST 20 bytes of `swapPath`.
+    /// @param swapPath     UniV3 multi-hop path bytes (`token0 || fee0 || token1 || fee1 || ...
+    ///                     || tokenN`). Single-hop = 43 bytes (`tokenIn || fee || tokenOut`).
+    ///                     Last 20 bytes MUST equal `address(underlyingAsset)` so we can never
+    ///                     accidentally swap to a different output token.
     /// @param amountIn     Reward amount to swap. Usually `rewardToken.balanceOf(this)`.
     /// @param minOut       Minimum underlying received (slippage protection).
     /// @return usdcOut     Underlying actually received from the swap (also re-deposited).
     function _swapAndReinvest(
         address rewardToken,
-        uint24 poolFee,
+        bytes calldata swapPath,
         uint256 amountIn,
         uint256 minOut
     ) internal returns (uint256 usdcOut) {
@@ -235,16 +239,17 @@ abstract contract BaseStrategy is IStrategy, ReentrancyGuard {
         if (rewardToken == address(underlyingAsset)) revert Errors.AssetMismatch(rewardToken, address(underlyingAsset));
         if (amountIn == 0) return 0;
 
+        // Layout + endpoint binding — prevents a malicious Keeper from re-routing the
+        // swap to a different input or output token.
+        _validateSwapPath(rewardToken, swapPath);
+
         IERC20(rewardToken).forceApprove(address(dexRouter), amountIn);
-        usdcOut = dexRouter.exactInputSingle(
-            ISwapRouter.ExactInputSingleParams({
-                tokenIn: rewardToken,
-                tokenOut: address(underlyingAsset),
-                fee: poolFee,
+        usdcOut = dexRouter.exactInput(
+            ISwapRouter.ExactInputParams({
+                path: swapPath,
                 recipient: address(this),
                 amountIn: amountIn,
-                amountOutMinimum: minOut,
-                sqrtPriceLimitX96: 0
+                amountOutMinimum: minOut
             })
         );
 
@@ -256,5 +261,23 @@ abstract contract BaseStrategy is IStrategy, ReentrancyGuard {
             _deposit(usdcOut);
         }
         emit RewardsCompounded(rewardToken, amountIn, usdcOut);
+    }
+
+    /// @dev Checks the path bytes are well-formed and bound to the right endpoints.
+    ///      Split out of `_swapAndReinvest` so its stack stays shallow enough to compile
+    ///      without `viaIR`.
+    function _validateSwapPath(address rewardToken, bytes calldata path) private view {
+        uint256 pathLen = path.length;
+        // Every hop is `address (20B) + fee (3B)`, terminated by the output address —
+        // so length must be 20 + N*23 (>= 43 for single-hop).
+        if (pathLen < 43 || (pathLen - 20) % 23 != 0) revert Errors.InvalidPath();
+        address pathIn;
+        address pathOut;
+        assembly {
+            pathIn  := shr(96, calldataload(path.offset))
+            pathOut := shr(96, calldataload(add(path.offset, sub(pathLen, 20))))
+        }
+        if (pathIn != rewardToken) revert Errors.InvalidPath();
+        if (pathOut != address(underlyingAsset)) revert Errors.InvalidPath();
     }
 }

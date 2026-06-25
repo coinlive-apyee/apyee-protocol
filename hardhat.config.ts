@@ -43,7 +43,9 @@ const config: HardhatUserConfig = {
     version: "0.8.28",
     settings: {
       optimizer: { enabled: true, runs: 200 },
-      viaIR: false,
+      // V2.1.1: enabled to handle the deeper local-variable count in
+      // FluidStrategy.claimAndCompound (swapPath addition + 6 distributor inputs).
+      viaIR: true,
       evmVersion: "cancun",
     },
   },

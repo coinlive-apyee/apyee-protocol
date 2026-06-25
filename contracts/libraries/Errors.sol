@@ -34,6 +34,9 @@ library Errors {
     error AssetMismatch(address expected, address actual);
     error ProtocolCallFailed(uint256 errorCode);
 
+    // V2.1.1 (multi-hop swap): malformed swapPath, wrong endpoint binding, or under-length.
+    error InvalidPath();
+
     // --- Allocation ---
     error AllocationExceeded(uint256 requested, uint256 max);
 }

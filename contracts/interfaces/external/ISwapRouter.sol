@@ -22,10 +22,27 @@ interface ISwapRouter {
         uint160 sqrtPriceLimitX96;   // 0 disables the price-limit guard
     }
 
+    struct ExactInputParams {
+        bytes path;                  // tokenIn (20B) || fee (3B) || tokenOut (20B) || fee (3B) || ...
+        address recipient;
+        uint256 amountIn;
+        uint256 amountOutMinimum;
+    }
+
     /// @notice Swap `amountIn` of `tokenIn` for as much `tokenOut` as possible, with a
-    ///         minimum out-amount enforced by `amountOutMinimum`.
+    ///         minimum out-amount enforced by `amountOutMinimum`. Single-hop only.
     /// @return amountOut  The amount of `tokenOut` received.
     function exactInputSingle(ExactInputSingleParams calldata params)
+        external
+        payable
+        returns (uint256 amountOut);
+
+    /// @notice Multi-hop swap along a `path` (`token0 || fee0 || token1 || fee1 || token2 || ...`).
+    ///         V2.1 (Soken F-04 follow-up): some reward tokens have no deep direct USDC pool
+    ///         (e.g. COMP / MORPHO), so the Keeper-supplied path can route via WETH or any
+    ///         number of intermediate hops. Single-hop is still expressible (43-byte path).
+    /// @return amountOut  The amount of the final token in `path` received.
+    function exactInput(ExactInputParams calldata params)
         external
         payable
         returns (uint256 amountOut);

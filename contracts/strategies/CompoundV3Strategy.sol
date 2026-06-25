@@ -114,11 +114,14 @@ contract CompoundV3Strategy is BaseStrategy {
     /// @dev    Caller is the current Vault keeper (read dynamically — see BaseStrategy.onlyKeeper).
     ///         If `cometRewards` is unset (address(0)) or no COMP has accrued, the call
     ///         is a no-op (no revert) so the Keeper bot can probe cheaply.
-    /// @param poolFee  UniV3 COMP/USDC pool fee tier (10000 = 1% on Ethereum mainnet).
+    /// @param swapPath UniV3 multi-hop path bytes — `rewardToken || fee0 || mid1 || fee1 || ... || USDC`.
+    ///                 Single-hop = 43 bytes. COMP/USDC has shallow direct liquidity in practice, so
+    ///                 the Keeper bot will typically supply `COMP || 3000 || WETH || 500 || USDC` etc.
+    ///                 Path endpoints are validated inside `_swapAndReinvest`.
     /// @param minOut   Minimum USDC out from the swap (slippage protection, Keeper-computed).
     /// @return claimed Amount of reward tokens pulled from the distributor.
     /// @return swapped Amount of USDC received from the swap (= re-deposited into Compound).
-    function claimAndCompound(uint24 poolFee, uint256 minOut)
+    function claimAndCompound(bytes calldata swapPath, uint256 minOut)
         external
         onlyKeeper
         nonReentrant
@@ -136,6 +139,6 @@ contract CompoundV3Strategy is BaseStrategy {
         claimed = IERC20(rewardToken).balanceOf(address(this)) - balBefore;
 
         if (claimed == 0) return (0, 0);
-        swapped = _swapAndReinvest(rewardToken, poolFee, claimed, minOut);
+        swapped = _swapAndReinvest(rewardToken, swapPath, claimed, minOut);
     }
 }
