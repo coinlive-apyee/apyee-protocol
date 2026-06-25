@@ -2,7 +2,9 @@
 
 > **Audit Report**: Soken APY-2026-06-001 · **Date**: 2026-06-23 · **Audited commit**: V2.0 source at tag [`v2.0.0`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v2.0.0)
 >
-> **Remediation branch**: `feat/v2.1` · **Status (2026-06-25)**: code + tests landed, awaiting Soken remediation review.
+> **Released tags**: [`v2.1.0`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v2.1.0) (initial remediation) · [`v2.1.1`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v2.1.1) (F-04 follow-up — multi-hop swap path)
+>
+> **Review target**: `v2.1.1` · **Status (2026-06-25)**: both tags public, awaiting Soken remediation review.
 
 This document maps every Soken finding to the V2.1 fix commit + the new test that
 catches a regression on the same root cause. For each fix the inverse pre-fix
@@ -284,25 +286,32 @@ centralization risk inherent to every DeFi multi-sig.
 | `e3ca5e1` | Batch 3 — F-04 reward claim+compound for all 5 strategy adapters |
 | `42ab80a` | Batch 4 — F-04g chain × strategy reward matrix + `constructorArgsFor` plumbing |
 | `209e379` | Batch 5 — V2.1 test spec, 14 cases (matches every finding) |
+| _tag_ `v2.1.0` | 2026-06-25 — initial remediation released |
+| `1efafbb` | V2.1.1 contracts — multi-hop swap path (F-04 follow-up) |
+| _tests_  | V2.1.1 — Compound real fork (3) + 5 strategy mock unit (11) |
+| `21736a7` | V2.1.1 docs — `SOKEN_AUDIT.md` F-04 follow-up subsection |
+| _tag_ `v2.1.1` | 2026-06-25 — F-04 follow-up released |
 
-Tag `v2.1.0` will be created once Soken's remediation review confirms the fix set.
+Both tags are public on GitHub. Soken's remediation review is requested against `v2.1.1`.
 
 ---
 
 ## Acceptance criteria for the remediation review
 
+All criteria below are evaluated against tag **`v2.1.1`** (the V2.1.1 release supersedes the
+initial `v2.1.0`; see §F-04 follow-up for the rationale).
+
 1. **Critical (F-17)**: re-run Soken's `VaultV2_Brick_StaleSharePrice.t.sol` against
-   `feat/v2.1` HEAD. All 7 cases including `test_permanent_noRecovery` should now PASS
+   `v2.1.1`. All 7 cases including `test_permanent_noRecovery` should now PASS
    the post-fix expectation (vault recovers; no `FeeTooHigh` revert).
 2. **Medium (F-01, F-02)**: re-run Soken's `VaultV2_F01_DepositPreviewStaleAccrue.t.sol`
    and `VaultV2_F02_DuplicateStrategy.t.sol`. Both should now demonstrate the fixed
    behavior (no shortfall, no double-count).
 3. **Low (F-03, F-04, F-06, F-07)**: confirm formula, claim entrypoints, Ownable2Step,
    and bounded `strategyList` per the file references above.
-4. **Informational code-change (F-05, F-15, F-16)**: confirm quarantine semantics, error
+4. **F-04 follow-up (V2.1.1)**: review multi-hop `_swapAndReinvest` + `_validateSwapPath`
+   endpoint binding. Coverage: Compound real Ethereum fork (3) + 5 strategy mock unit (11).
+5. **Informational code-change (F-05, F-15, F-16)**: confirm quarantine semantics, error
    library cleanup, and trust-model phrasing.
-5. **Informational acknowledged**: no action — Soken to confirm the acknowledgements are
+6. **Informational acknowledged**: no action — Soken to confirm the acknowledgements are
    appropriately documented.
-
-A follow-up commit will add the per-distributor fork specs once chain-specific RPC stability
-is confirmed for the new claim flows.
