@@ -126,7 +126,7 @@ incentives as separate ERC-20 streams not reflected in supply `balanceOf`. Adapt
 **Fix** (multiple files):
 
 - `BaseStrategy` gains `dexRouter` (constructor-pinned UniV3 SwapRouter02 / PancakeV3
-  SmartRouter) + `_swapAndReinvest(rewardToken, poolFee, amountIn, minOut)` helper
+  SmartRouter) + `_swapAndReinvest(rewardToken, swapPath, amountIn, minOut)` helper
 - Each adapter exposes its protocol-specific `claimAndCompound(...)` external function gated
   by `onlyKeeper` + `nonReentrant`. The strategy itself originates the distributor call (Fluid
   requires `msg.sender == recipient`; the same pattern is used everywhere for consistency).
@@ -137,9 +137,48 @@ incentives as separate ERC-20 streams not reflected in supply `balanceOf`. Adapt
 
 Full distributor table + per-chain DEX router map: [`docs/V2_DESIGN.md` §6.2](V2_DESIGN.md).
 
-**Test**: `test_f04_baseStrategy_keeper_isReadDynamicallyFromVault` covers the `onlyKeeper`
-dynamic read invariant (fork specs for the full claim flow per distributor will land in a
-follow-up commit).
+#### F-04 follow-up — multi-hop swap path (V2.1.1)
+
+After the initial V2.1.0 fix went out, a real-mainnet probe (Compound on Ethereum fork)
+revealed that several reward tokens — COMP and MORPHO in particular — have no deep
+direct USDC pool on UniswapV3. The single-hop `exactInputSingle(rewardToken, USDC, fee)`
+call therefore reverted at the router. Without a routing change a meaningful fraction of
+F-04's value would be lost.
+
+V2.1.1 fix (Soken APY-2026-06-001 follow-up):
+
+- `BaseStrategy._swapAndReinvest` argument changed from `uint24 poolFee` to
+  `bytes calldata swapPath`. The router call is now `exactInput(path)` (UniV3 multi-hop).
+- `_validateSwapPath(rewardToken, path)` enforces:
+  - layout `20 + N*23` (so `>= 43` bytes, even number of "address + fee" hops)
+  - the first 20 bytes equal the supplied `rewardToken`
+  - the last 20 bytes equal `address(underlyingAsset)` (= USDC)
+  → an adversarial Keeper cannot route the swap to a different input or output token.
+- All five `claimAndCompound` external signatures take `bytes swapPath` instead of `poolFee`.
+- New error `Errors.InvalidPath` covers the three failure modes above.
+- `hardhat.config.ts` now enables `viaIR: true` to keep `FluidStrategy.claimAndCompound`'s
+  local stack within compiler limits (the new path argument added a slot on top of an
+  already-crowded 8-input function).
+
+**Tests** (14 cases):
+
+- `test/v2/Strategy.claim.fork.spec.ts` (Ethereum mainnet fork, 3 cases)
+  Compound V3 end-to-end multi-hop `COMP → WETH → USDC` against the real UniV3 SwapRouter02
+  and live `CometRewards`. Reward distributor is whale-funded inside the test to handle
+  the typical "fresh fork → empty distributor" state.
+- `test/v2/Strategy.claim.spec.ts` (mock distributor unit, 11 cases)
+  Compound (3 — claim, NotKeeper, **InvalidPath**), Venus, Aave, Morpho, Fluid (each: claim
+  + NotKeeper). Mocks cover the four distributor shapes the Ethereum fork doesn't
+  reproduce on a stable block.
+- Earlier `Vault.v21.spec.ts` `test_f04_baseStrategy_keeper_isReadDynamicallyFromVault`
+  still covers the `onlyKeeper` dynamic-read invariant in isolation.
+
+Coverage rationale: the e2e e2e (distributor + multi-hop swap + reinvest + `_accrue` fee
+mint) is exercised on Compound, which shares the identical `BaseStrategy._swapAndReinvest`
+path used by the other four adapters. The four adapter-specific tests verify each adapter's
+distributor invocation shape (cumulative + proof + cycle for Fluid, merkle for Morpho,
+multi-aToken for Aave, single-vToken for Venus). Symmetry across strategies + shared base
+contract makes the Compound fork a representative end-to-end witness.
 
 ---
 
