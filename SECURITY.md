@@ -66,25 +66,39 @@ Severity classification follows the
 
 ## Audit Status
 
-**Pre-audit (as of 2026-06).** The V2 generation is tagged
-[`v2.0.0`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v2.0.0).
-V1 sources are accessible at
-[`v1.0.0`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v1.0.0)
-and remain on-chain but are not part of the V2 audit deliverable.
-
-Audit timeline:
+**V2.1 remediation in progress (as of 2026-06-25).** Soken completed the V2 solo
+audit and the remediation lives on the `feat/v2.1` branch pending a remediation
+review.
 
 | Stage | Target | Status |
 |---|---|---|
 | Internal review + mainnet fork testing | Pre-launch | Complete (2026-05/06) |
-| Solo audit (single firm) — V2 | Post-V2 Soft Launch | In planning |
-| Contest audit (Code4rena / Cantina / Sherlock) | Post-Solo | Planned |
-| Bug bounty program | Post-Solo audit | Planned |
+| **Solo audit (Soken) — V2** | Post-V2 Soft Launch | **Complete (2026-06-23, report APY-2026-06-001)** |
+| **V2.1 remediation (16 findings → fixes)** | Post-audit | **In review — `feat/v2.1` PR** |
+| Soken remediation review | Post-fix | Scheduled |
+| Contest audit (Code4rena / Cantina / Sherlock) | Post-V2.1 deploy | Planned |
+| Bug bounty program | Post-V2.1 / post-contest | Planned |
 
-Deposit caps during pre-audit operation are intentionally conservative
-(`$500K`/chain Soft Launch, `$10K`/user Free tier) and Owner-tightenable at any
-time via `setDepositCap` / `setDefaultUserCap` Multi-sig calls. The audit
-commit hash will be published in this section once the engagement begins.
+V2 generation tags:
+- [`v2.0.0`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v2.0.0) — the audited V2 source (Soken APY-2026-06-001)
+- `v2.1.0` (forthcoming) — Soken remediation. See [`docs/SOKEN_AUDIT.md`](docs/SOKEN_AUDIT.md) for finding → fix mapping
+- [`v1.0.0`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v1.0.0) — V1 sources, on-chain but not part of the V2 audit deliverable
+
+Soken findings summary (full mapping in [`docs/SOKEN_AUDIT.md`](docs/SOKEN_AUDIT.md)):
+- **1 Critical** (F-17) — permanent vault brick via stale `lastSharePrice` once
+  `totalSupply()` returned to zero. **Fixed in V2.1** by resetting the baseline.
+- **2 Medium** (F-01 accrual hook ordering, F-02 strategy duplicate on re-add).
+  Both fixed.
+- **4 Low** (F-03 fee over-charge, F-04 reward tokens uncollected, F-06 single-step
+  Ownable, F-07 unbounded `strategyList`). All fixed.
+- **9 Informational** — 5 with code changes (F-05 quarantine, F-15 unused errors,
+  trust-model phrasing F-16, etc.), 4 acknowledged as documented design tradeoffs.
+
+V2.0 contracts remain on-chain (immutable). V2.0 holders will be invited to
+migrate to V2.1 once the remediation review completes; V2.0 → V2.1 migration is
+voluntary (mirrors V1 → V2). The current V2.0 `setDepositCap` was intentionally
+set conservatively (`$500K`/chain Soft Launch, `$10K`/user Free tier) and remains
+Owner-adjustable until the migration window closes.
 
 ---
 
