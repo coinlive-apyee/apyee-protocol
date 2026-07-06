@@ -351,8 +351,12 @@ abstract contract BaseStrategy is IStrategy, ReentrancyGuard {
     /// @dev    Reward tokens like FLUID, KINZA, SPK often lack Chainlink coverage. The
     ///         Owner is expected to update this price periodically (weekly EMA or on
     ///         significant deviation). Trust surface: this value is not on-chain-
-    ///         attested; a malicious Owner could inflate it to disable the floor. That
-    ///         sits within the existing Owner-trust model (see docs/TRUST_MODEL.md).
+    ///         attested. V2.1.3 (Soken F-i04): the trust direction is **deflation**, not
+    ///         inflation — a malicious Owner who *deflates* this value collapses the
+    ///         floor toward 0 and lets a colluding Keeper sandwich the swap. Inflating
+    ///         the value only raises the floor (liveness DoS on legit claims, not a theft
+    ///         vector). Both sit within the existing Owner-trust model (see
+    ///         docs/TRUST_MODEL.md §9.7.2). Related residual: Soken F-903.
     function setRewardFallbackPrice(address rewardToken, uint256 priceE8)
         external
         onlyVaultOwner
@@ -430,6 +434,17 @@ abstract contract BaseStrategy is IStrategy, ReentrancyGuard {
     ///      configured (Keeper must wait for Owner to bootstrap the price config
     ///      before the first claim). Applies `maxSlippageBps` (per-token override or
     ///      default 5%) to arrive at the minimum acceptable USDC out.
+    ///
+    ///      V2.1.3 (Soken F-i02) — known second-order limitations documented for the
+    ///      threat model, not defects for material claim amounts:
+    ///        (a) For dust `amountIn` where `rewardDec > underlyingDec` (e.g. 1 wei of
+    ///            an 18-dp reward against 6-dp USDC), the mulDiv chain truncates
+    ///            `fairOut` — and hence the floor — to 0. Economically irrelevant (dust
+    ///            output is dust); the "0 < floor for any amountIn > 0" phrasing from
+    ///            Soken N-03 should be read as "for any material claim amount".
+    ///        (b) The output side is priced against USDC at $1 (no USDC/USD feed). Skew
+    ///            is second-order and only relevant during a USDC depeg — outside the
+    ///            normal operating envelope.
     /// @param rewardToken  The reward token being swapped.
     /// @param amountIn     Amount of `rewardToken` (in its native decimals) about to be
     ///                     forwarded to the DEX router.

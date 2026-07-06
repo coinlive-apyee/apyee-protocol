@@ -374,36 +374,47 @@ contract VaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     ///      pre-fix `maxWithdraw` triggers `ERC4626ExceededMaxWithdraw` by a small
     ///      residual (= the fee that would be minted mid-tx).
     ///
-    ///      Correctness on the transactional path is preserved: `_deposit` / `_withdraw`
-    ///      / `mint` / `redeem` all call `_accrue()` before super, so at the moment
-    ///      `_convertToAssets` runs inside those paths, `_pendingFeeShares()` returns 0.
-    ///      This override is therefore a **no-op on transactional paths** and a
-    ///      correction only on external view queries.
+    ///      Correctness on the transactional path is preserved by combining two facts:
+    ///        (a) `_deposit` / `_withdraw` / `mint` / `redeem` all call `_accrue()` before
+    ///            super, so on the *first* accrue of each block, `_pendingFeeShares()` is 0.
+    ///        (b) V2.1.3 (Soken F-902 fix) — inside the same block, `_accrue()` short-circuits
+    ///            without refreshing `lastSharePrice`. If `totalAssets()` rises after that
+    ///            first accrue (a direct USDC donation — Soken F-10 class), the naïve
+    ///            `_pendingFeeShares()` would go non-zero and the override would break the
+    ///            bit-identical invariant on later same-block previews. To close that gap
+    ///            we gate the pending term on `lastAccruedAt == block.timestamp` — the
+    ///            same latch that governs `_accrue()` itself — so the override is *exactly*
+    ///            what a fresh accrue would have produced this block: nothing extra.
     ///
-    ///      This is a natural extension of Soken F-01 (accrue-BEFORE-preview) from the
-    ///      transactional path to the view path — same principle, same accounting model.
+    ///      Result: the override is a **strict no-op on transactional paths**, bit-identical
+    ///      to base OZ math for every deposit/mint/withdraw/redeem call chain, and a
+    ///      correction only on external view queries (which do not accrue). Natural extension
+    ///      of Soken F-01 (accrue-BEFORE-preview) from the transactional path to the view path.
     function _convertToAssets(uint256 shares, Math.Rounding rounding)
         internal
         view
         override
         returns (uint256)
     {
+        // Soken F-902 gate — see comment above.
+        uint256 pf = (lastAccruedAt == block.timestamp) ? 0 : _pendingFeeShares();
         return shares.mulDiv(
             totalAssets() + 1,
-            totalSupply() + _pendingFeeShares() + 10 ** _decimalsOffset(),
+            totalSupply() + pf + 10 ** _decimalsOffset(),
             rounding
         );
     }
 
-    /// @dev V2.1.2 — mirror of `_convertToAssets` for the shares direction. See rationale above.
+    /// @dev V2.1.2 — mirror of `_convertToAssets` for the shares direction. Same F-902 gate.
     function _convertToShares(uint256 assets, Math.Rounding rounding)
         internal
         view
         override
         returns (uint256)
     {
+        uint256 pf = (lastAccruedAt == block.timestamp) ? 0 : _pendingFeeShares();
         return assets.mulDiv(
-            totalSupply() + _pendingFeeShares() + 10 ** _decimalsOffset(),
+            totalSupply() + pf + 10 ** _decimalsOffset(),
             totalAssets() + 1,
             rounding
         );
@@ -901,9 +912,14 @@ contract VaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     /// @dev Validates: strategy active, amount > 0, idle ≥ amount, post-deposit strategy
     ///      balance ≤ `(totalAssets × maxAllocationBps) / 10_000` (per-strategy cap).
     ///      Uses `forceApprove` (SafeERC20) to handle non-standard ERC-20 approve semantics.
+    ///      V2.1.3 (Soken F-901): now `whenNotPaused`. When Guardian pauses the vault as
+    ///      an incident-response measure, this closes the last principal-in path so
+    ///      autonomous Keepers cannot move idle USDC into a still-`isActive` strategy
+    ///      during the pause window. Recovery-direction paths (`divestFromStrategy`,
+    ///      `emergencyWithdraw`) remain pause-free by design.
     /// @param strategy  The active strategy to invest into.
     /// @param amount    Asset units to invest (USDC raw). Must be > 0.
-    function investToStrategy(address strategy, uint256 amount) external onlyKeeper nonReentrant {
+    function investToStrategy(address strategy, uint256 amount) external onlyKeeper whenNotPaused nonReentrant {
         StrategyInfo storage info = strategyInfo[strategy];
         if (!info.isActive) revert Errors.StrategyNotWhitelisted(strategy);
         // V2.1 (Soken F-05): block invest into a quarantined strategy — quarantine signals

@@ -6,6 +6,36 @@ This project uses [Semantic Versioning](https://semver.org/). Contracts are **im
 
 ---
 
+## v2.1.3 — Soken remediation-review residuals (2026-07-06)
+
+Follow-up on Soken **APY-2026-06-002** (V2.1.2 review, verdict PASS 88/100 with 2 Low + 5 Informational residuals). Addresses the two actionable code items (F-902, F-901) plus four documentation/comment tightenings requested in the report. Prod deployment is gated on Soken's diff-confirmation addendum extending APY-2026-06-002 to cover this tag.
+
+### Vault layer (`Vault.sol`)
+
+- **F-902 — same-block accrue-latch gate on fix #9 override.** `_convertToAssets` / `_convertToShares` now compute `pf = (lastAccruedAt == block.timestamp) ? 0 : _pendingFeeShares()` and use `pf` in the divisor. Restores the bit-identical invariant on the transactional path that V2.1.2 §11.3.9 originally stated: inside the same block the pending term is forced to 0, mirroring the latch that governs `_accrue()` itself. Outside the same-block window the override remains accrue-aware (fix #9's original frontend `maxWithdraw` MAX behaviour is preserved).
+- **F-901 — `whenNotPaused` on `investToStrategy`.** Pre-existing gap (unchanged since V2, outside N-02's scope) surfaced by the V2.1.2 pause-propagation comment. Guardian pause now closes the last principal-in path. `divestFromStrategy`, `emergencyWithdraw`, and user `withdraw` / `redeem` intentionally remain pause-free (§6 invariant).
+
+### Strategy layer (`BaseStrategy.sol`)
+
+- **F-i04 — inflate/deflate trust direction correction.** `setRewardFallbackPrice` doc-comment now correctly states that *deflation* disables the floor (a colluding-Keeper theft vector), not inflation (which only raises the floor — a liveness DoS).
+- **F-i02 — `_computeMinOutFloor` residual notes.** Comment now documents (i) dust `amountIn` case where `rewardDec > underlyingDec` truncates `fairOut` to 0 (economically irrelevant for material claim amounts), and (ii) implicit USDC = $1 assumption (second-order skew on a USDC depeg).
+
+### Docs
+
+- **F-i01 — TRUST_MODEL §9.2 floor framing.** `docs/TRUST_MODEL.md` §9.2 now separates the floor into "Chainlink-strong" (feed-backed reward tokens) and "Owner-trust" (fallback-price-driven long-tail tokens), and notes the deflate-direction attack path against fallback-priced tokens. Related residual: F-903.
+- **F-903 / F-i03 — ops runbook (apyee-docs `SERVER_KEEPER_CLAIM.md` §11.2).** New V2.1.3 subsection covering (i) Morpho URD expiry monitoring plus fallback-price freshness for feed-less reward tokens, and (ii) reminder that Owner config setters (`setRewardPriceFeed` etc.) are not `onlyDeployChain` and must be signed on the correct chain.
+
+### Tests
+
+- `test/v2/Vault.v213.spec.ts` — 6 new specs. F-902: same-block accrue-latch reproduces Soken PoC via `evm_setAutomine` and asserts `convertToShares == baseOZ`, plus a multi-block regression guard confirming pending is still reflected in later views. F-901: paused `investToStrategy` reverts `EnforcedPause`, unpaused version succeeds, `divestFromStrategy` and user `redeem` remain pause-free while paused.
+- Full suite (apyee-contracts main): **338 passing / 56 pending / 0 failing** (was 332 at v2.1.2 → +6). apyee-protocol subset: **149 passing / 9 pending** (was 143 → +6).
+
+### No change to
+
+- External interfaces, ABI shape, storage layout, cap parameters, or the audited-scope file set. Round-1 (16) and round-2 (25) findings remain fully mitigated.
+
+---
+
 ## v2.1.2 — Soken round-2 remediation (2026-07-06)
 
 Round-2 audit response for Soken **APY-2026-06-002** (V2.1.1 review, verdict REVIEW 78/100 with 25 new findings + 8 pre-release recommendations). All 8 recommendations addressed. Round-1 findings (16 total) remain fully mitigated.
