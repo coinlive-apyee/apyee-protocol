@@ -275,13 +275,37 @@ fallback price, then reduces by the per-token slippage (or default 5%).
 `_swapAndReinvest` reverts `MinOutBelowFloor(minOut, floor)` when the
 Keeper-supplied `minOut` is below the floor. Neither Chainlink nor fallback
 configured → `MinOutFloorUnconfigured(rewardToken)`. Negative or stale feed answer →
-`InvalidPrice` / `PriceFeedStale(updatedAt, blockTs)`. A `minOut = 0` call always
-reverts (0 < floor for any positive `amountIn`).
+`InvalidPrice` / `PriceFeedStale(updatedAt, blockTs)`. A `minOut = 0` call reverts
+for any material claim amount (see the dust caveat below).
 
-The three layers are independent — bypassing one leaves the others in place. The
+**Trust framing — Chainlink-strong vs. Owner-trust (V2.1.3 clarification, Soken F-i01).**
+Layer C is not uniformly "on-chain-strong". Its strength depends on which price source
+governs the reward token:
+
+- **Chainlink-strong.** For reward tokens with a Chainlink USD feed configured via
+  `setRewardPriceFeed` (typically COMP, AAVE, MORPHO on Ethereum/Base/Arbitrum), the
+  floor is derived from the aggregator answer and the `PRICE_STALENESS = 1 day` guard.
+  A compromised Owner cannot degrade this floor because the fallback price is only
+  consulted when the feed address is `address(0)`. This branch is fully on-chain-strong.
+- **Owner-trust.** For long-tail reward tokens without Chainlink coverage (FLUID, KINZA,
+  SPK), the floor is derived from `rewardFallbackPriceE8`, which the Owner sets. A
+  malicious/compromised Owner can *deflate* this value to collapse the floor toward 0
+  and let a colluding Keeper sandwich the swap. This sits inside the pre-existing
+  Owner-trust model (see §9.7.2). *Inflating* the value only raises the floor —
+  a liveness DoS on legit claims, not a theft vector.
+
+Second-order caveats on the floor formula (Soken F-i02): (i) for dust `amountIn`
+values where `rewardDec > underlyingDec`, `fairOut` truncates to 0 and the floor
+becomes 0 — economically irrelevant (dust output is dust); (ii) the output side is
+priced against USDC at $1 (no USDC/USD feed) — skew is second-order and only relevant
+during a USDC depeg.
+
+The three layers remain independent — bypassing one leaves the others in place. The
 resulting worst-case sandwich loss on a Keeper compromise is capped at
-`MAX_SLIPPAGE_BPS_CAP = 10%` of the reward stream, and principal is unreachable via
-this path (see §5.2).
+`MAX_SLIPPAGE_BPS_CAP = 10%` of the reward stream *for feed-backed tokens*. For
+feed-less tokens the effective cap is the Owner's fallback-price accuracy plus the
+slippage band; that gap is a Owner-trust residual by design (§9.7.2). Principal is
+unreachable via this path in either case (see §5.2).
 
 ### 9.3 Pause propagation to strategies (N-02)
 

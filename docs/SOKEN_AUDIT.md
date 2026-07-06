@@ -1,4 +1,4 @@
-# Soken Audit Remediation — V2.0 → V2.1 → V2.1.2
+# Soken Audit Remediation — V2.0 → V2.1 → V2.1.2 → V2.1.3
 
 > **Audit Report (round 1)**: Soken APY-2026-06-001 · **Date**: 2026-06-23 · **Audited commit**: V2.0 source at tag [`v2.0.0`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v2.0.0)
 >
@@ -546,3 +546,67 @@ Regression check: run the full V2.1.1 test suite against V2.1.2 on this repo —
 pre-existing V2 tests must still pass (V2.1.2 adds 40 new specs — 36 for the 8 Soken
 recommendations plus 4 for fix #9 — total 143 passing / 9 pending on
 `npx hardhat test`).
+
+---
+
+## 12. V2.1.3 — Soken remediation-review residuals
+
+> **Round-2 audit outcome**: Soken **APY-2026-06-002** — [`v2.1.2`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v2.1.2) reviewed 2026-07-06, verdict **PASS**, security score **88 / 100** (from 78 / 100). All 8 pre-release recommendations closed; the report flags 2 Low + 5 Informational residuals, none affecting principal. This section documents the follow-up code and doc changes that address the two actionable residuals (F-902 code fix, F-901 pre-existing hardening) plus the four comment/doc tightenings requested (F-i01 / F-i02 / F-i04 in-source, F-903 / F-i03 in the ops runbook).
+>
+> **Blockaid verify-project posture**: v2.1.3 is submitted to Soken for a diff confirmation (one-line addendum extending APY-2026-06-002 to cover the v2.1.3 tag). Prod deployment is gated on that confirmation so the verify-project submission package cites a report that matches the deployed bytecode.
+
+### 12.1 Summary
+
+| Item | Severity in APY-2026-06-002 | Fix location |
+|---|---|---|
+| **F-902** — fix #9 override not bit-identical under same-block accrue-latch | Low | `Vault.sol` — two `_convertToAssets` / `_convertToShares` overrides gated on `lastAccruedAt == block.timestamp` |
+| **F-901** — `investToStrategy` not pause-gated | Info (pre-existing, Low under compromised-Keeper) | `Vault.sol` — `whenNotPaused` added to `investToStrategy` |
+| **F-i04** — inflate/deflate trust direction backwards in `BaseStrategy.setRewardFallbackPrice` doc | Info | `BaseStrategy.sol` comment corrected |
+| **F-i02** — `_computeMinOutFloor` dust truncation + USDC=$1 assumption not documented | Info | `BaseStrategy.sol` comment expanded |
+| **F-i01** — TRUST_MODEL frames the floor as uniformly "on-chain" | Info | `docs/TRUST_MODEL.md` §9.2 tightened (Chainlink-strong vs. Owner-trust split) |
+| **F-903** — Owner-trust for feed-less tokens + staleness DoS on URD expiry | Low | apyee-docs `SERVER_KEEPER_CLAIM.md` §11.2 runbook + `TRUST_MODEL.md` §9.2 note |
+| **F-i03** — Owner config setters not chain-gated | Info | apyee-docs `SERVER_KEEPER_CLAIM.md` §11.2 runbook (deploy chain call reminder) |
+
+### 12.2 F-902 fix — one-line gate exactly as Soken recommended
+
+Per Soken §5.2 recommendation:
+
+```solidity
+uint256 pf = (lastAccruedAt == block.timestamp) ? 0 : _pendingFeeShares();
+```
+
+Applied to both `_convertToAssets` and `_convertToShares`. Uses `pf` in each divisor. The gate mirrors the same latch that governs `_accrue()` itself, so the override tracks exactly what a fresh accrue would (not) mint this block: nothing extra. Restores the "no-op on the transactional path" invariant stated in §11.3.9.
+
+- **Same-block window** (`lastAccruedAt == block.timestamp`): pending term forced to 0 → override yields bit-identical result to base OZ. Closes the deposit-side leak Soken PoC measured at +2.56% over-mint under a self-funded donation.
+- **Later blocks** (view queries outside the latch): pending term evaluated normally → external `maxWithdraw` / `previewWithdraw` etc. remain accrue-aware. Fix #9's original purpose (frontend MAX button no longer reverts `ERC4626ExceededMaxWithdraw`) is unchanged.
+
+### 12.3 F-901 fix — `whenNotPaused` on `investToStrategy`
+
+Per Soken §5.1 recommendation, single-chokepoint at the Vault level:
+
+```solidity
+function investToStrategy(address strategy, uint256 amount)
+    external onlyKeeper whenNotPaused nonReentrant { ... }
+```
+
+Recovery-direction paths (`divestFromStrategy`, `emergencyWithdraw`) intentionally remain pause-free — user `withdraw` also remains pause-free (§6 core invariant unchanged). Guardian pause now closes the last principal-in path, matching the doc-comment on `whenVaultNotPaused`.
+
+### 12.4 Test coverage
+
+- `test/v2/Vault.v213.spec.ts` — 6 new specs:
+  - **F-902**: `test_f902_sameBlockAccrueLatch_pendingIsZeroInsidePreview` (reproduces Soken's PoC scenario via `evm_setAutomine` — accrue + donate in one block, asserts `convertToShares == baseOZ`), `test_f902_multiBlock_pendingContinuesToBeReflectedInViews` (regression guard so fix does not over-correct).
+  - **F-901**: `test_f901_investToStrategy_whenPaused_reverts`, `test_f901_investToStrategy_whenUnpaused_succeeds`, `test_f901_divestFromStrategy_whenPaused_stillSucceeds`, `test_f901_userWithdraw_whenPaused_stillSucceeds`.
+- Full suite: **338 passing / 56 pending / 0 failing** on `apyee-contracts` main after V2.1.3 (was 332 → +6). apyee-protocol subset (V2 + mitigation + V2.1.3 specs) mirrors 143 → 149 passing.
+
+### 12.5 Acceptance criteria for the v2.1.3 diff confirmation
+
+Soken should confirm, in an addendum to APY-2026-06-002, that:
+
+1. The one-line pending gate exactly matches §5.2's recommendation (source: `Vault.sol` — search "F-902 gate").
+2. `investToStrategy` now carries `whenNotPaused` while `divestFromStrategy` / `emergencyWithdraw` / user `withdraw` remain pause-free (source: `Vault.sol`).
+3. `BaseStrategy.setRewardFallbackPrice` comment now states **deflation** disables the floor (source: `BaseStrategy.sol`).
+4. `BaseStrategy._computeMinOutFloor` comment now documents (i) dust truncation and (ii) implicit USDC = $1 (source: `BaseStrategy.sol`).
+5. `TRUST_MODEL.md` §9.2 now frames the floor as Chainlink-strong vs. Owner-trust rather than uniformly on-chain (source: `docs/TRUST_MODEL.md`).
+6. Full suite reproduces at **338 passing / 0 failing** on `apyee-contracts`, **149 passing / 0 failing** on `apyee-protocol`, PoC re-run inside `test/v2/Vault.v213.spec.ts` (auditor may cross-reference against their `Fix9_SameBlockAccrueLatch.t.sol`).
+
+No change of audit scope; no new external interface; no state layout change; no allocation-cap change. Round-1 (16) and round-2 (25) findings remain fully mitigated. Zero regressions.
