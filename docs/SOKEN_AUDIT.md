@@ -337,6 +337,7 @@ initial `v2.1.0`; see §F-04 follow-up for the rationale).
 | Informational (acknowledged) | 10 | Documented |
 | **Total new findings** | **25** | **15 fixed + 10 acknowledged** |
 | **Pre-release recommendations** | **8** | **All 8 implemented** |
+| **Post-submission additions (informational)** | **1** | **Fix #9 — see §11.3.9** |
 
 ### 11.2 Finding → mitigation matrix
 
@@ -366,13 +367,18 @@ Pre-release recommendations (numbered per Soken's list, all addressed):
 7. TRUST_MODEL documentation refresh → §11.3.7
 8. Constructor guards (router code check + chain pinning) → §11.3.8
 
+Post-submission addition (informational, self-identified — not part of Soken's original 8):
+
+9. Accrue-aware view math for `_convertToAssets` / `_convertToShares` → §11.3.9
+
 ### 11.3 Fix map (all 8)
 
 Each subsection: **finding link → code location → test coverage → trust-model
 reference**. The V2.1.2 test suite on this repository (`apyee-protocol`, the
-audit target) runs at **139 passing / 9 pending / 0 regression** against the
-V2.1.1 baseline (103 pre-existing V2 tests unchanged; 36 new mitigation-specific
-tests added). Reproduce with `npx hardhat test` at tag `v2.1.2`.
+audit target) runs at **143 passing / 9 pending / 0 regression** against the
+V2.1.1 baseline (103 pre-existing V2 tests unchanged; 40 new mitigation-specific
+tests added — 36 for the 8 Soken pre-release recommendations plus 4 for fix #9).
+Reproduce with `npx hardhat test` at tag `v2.1.2`.
 
 #### 11.3.1 On-chain Chainlink oracle floor (Recs #1 / F-04-MEV.1 / N-03)
 
@@ -464,6 +470,46 @@ tests added). Reproduce with `npx hardhat test` at tag `v2.1.2`.
   surface passes on the deploy chain.
 - **Trust model reference**: `TRUST_MODEL.md` §9.6.
 
+#### 11.3.9 Accrue-aware view math (self-identified post-submission addition)
+
+> **Not one of Soken's original 8 pre-release recommendations**. Included in
+> `v2.1.2` under Apyee's post-submission fix policy: view-function-only changes
+> that are natural extensions of an already-audited invariant (Soken F-01 —
+> accrue-BEFORE-preview) can be folded into the same tag without a formal
+> re-review round. Reported here for transparency and Soken's optional confirmation.
+
+- **Symptom (found in dev live-vault on Arbitrum, V2.1.1-dev, 2026-07-06)**: The
+  frontend queries `maxWithdraw(user)` and issues `withdraw(that amount, ..., ...)`.
+  The transaction reverts `ERC4626ExceededMaxWithdraw(user, requested, max)` by
+  a small residual (`requested − max ≈ 31 wei` in the observed case) — enough to
+  fail every "MAX button" flow after any yield has accrued.
+- **Root cause**: `Vault.withdraw` (V2.1 F-01 pattern) calls `_accrue()` before
+  `super.withdraw()`. `_accrue()` mints treasury shares against pending fee,
+  reducing the effective per-share value. The view helpers `maxWithdraw` /
+  `previewWithdraw` / `previewRedeem` / `convertToAssets` inherit OZ's base
+  `_convertToAssets` / `_convertToShares` which use `totalSupply()` directly —
+  they do NOT simulate the pending accrue, so the returned max is always slightly
+  larger than the transactional path will honor.
+- **Code**: `Vault.sol` — override `_convertToAssets` and `_convertToShares` to
+  include `_pendingFeeShares()` in the divisor. Internal helper
+  `_pendingFeeShares()` refactored out of the existing public `pendingFeeShares()`
+  view so the overrides can reuse the same math without an external self-call.
+- **Correctness on transactional path preserved**: `_deposit` / `_withdraw` /
+  `mint` / `redeem` all call `_accrue()` before their internal `super` invocation.
+  At the moment `_convertToAssets` runs inside those paths, `_pendingFeeShares()`
+  returns 0 (accrue just happened) → the override is a **no-op on the tx path**.
+  Correction applies only to external view queries.
+- **Relation to Soken F-01**: F-01 patched the accrue-timing on the transactional
+  path. This fix extends the same principle to view-side helpers so off-chain
+  callers see the same accounting model the on-chain path enforces.
+- **Tests**: 4 specs in `test/v2/Vault.maxWithdraw.spec.ts` — max reflects
+  pending accrue, max withdraw after yield succeeds (primary regression), preview
+  matches actual burn, zero-yield case matches base OZ behaviour (no-op invariant).
+- **Live-vault impact**: v2.1.1-dev vaults are immutable and retain the pre-fix
+  view; users work around via `redeem(shares)` (bypasses the assets-side max
+  check) or by requesting an amount marginally below `maxWithdraw`. v2.1.2 new
+  deployments carry the fix natively.
+
 ### 11.4 Acceptance criteria for the V2.1.2 review
 
 All criteria below are evaluated against tag **`v2.1.2`**.
@@ -489,7 +535,14 @@ All criteria below are evaluated against tag **`v2.1.2`**.
 8. **Rec #8 / R-01 / R-02**: 5 specs under *"constructor guards"*. Verify EOA is
    rejected at deploy, `address(0)` is still accepted as opt-out, and
    `onlyDeployChain` reverts `WrongChain` off the deploy chain.
+9. **Fix #9 (informational, self-identified)**: 4 specs under
+   *"accrue-aware maxWithdraw / previewWithdraw"*. Verify view helpers reflect
+   the pending accrue (`maxWithdraw` uses `totalSupply + pendingFeeShares`), a
+   full-`maxWithdraw` `withdraw` succeeds after yield growth (primary regression),
+   preview matches actual burn, and zero-yield case is a no-op vs the base OZ
+   implementation.
 
 Regression check: run the full V2.1.1 test suite against V2.1.2 on this repo — 103
-pre-existing V2 tests must still pass (V2.1.2 adds 36 new specs, total 139 passing
-/ 9 pending on `npx hardhat test`).
+pre-existing V2 tests must still pass (V2.1.2 adds 40 new specs — 36 for the 8 Soken
+recommendations plus 4 for fix #9 — total 143 passing / 9 pending on
+`npx hardhat test`).

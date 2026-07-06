@@ -363,6 +363,53 @@ contract VaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     }
 
     // ─────────────────────────────────────────────────────────────
+    // ERC-4626 conversion overrides (V2.1.2 — accrue-aware view math)
+    // ─────────────────────────────────────────────────────────────
+
+    /// @dev V2.1.2 — override to include pending streaming-fee shares in the divisor.
+    ///      Without this, view helpers (`maxWithdraw` / `previewWithdraw` /
+    ///      `previewRedeem` / `convertToAssets`) return a value that the transactional
+    ///      path cannot honor: `withdraw()` calls `_accrue()` first, which mints new
+    ///      treasury shares and dilutes each user share. A user hitting MAX with the
+    ///      pre-fix `maxWithdraw` triggers `ERC4626ExceededMaxWithdraw` by a small
+    ///      residual (= the fee that would be minted mid-tx).
+    ///
+    ///      Correctness on the transactional path is preserved: `_deposit` / `_withdraw`
+    ///      / `mint` / `redeem` all call `_accrue()` before super, so at the moment
+    ///      `_convertToAssets` runs inside those paths, `_pendingFeeShares()` returns 0.
+    ///      This override is therefore a **no-op on transactional paths** and a
+    ///      correction only on external view queries.
+    ///
+    ///      This is a natural extension of Soken F-01 (accrue-BEFORE-preview) from the
+    ///      transactional path to the view path — same principle, same accounting model.
+    function _convertToAssets(uint256 shares, Math.Rounding rounding)
+        internal
+        view
+        override
+        returns (uint256)
+    {
+        return shares.mulDiv(
+            totalAssets() + 1,
+            totalSupply() + _pendingFeeShares() + 10 ** _decimalsOffset(),
+            rounding
+        );
+    }
+
+    /// @dev V2.1.2 — mirror of `_convertToAssets` for the shares direction. See rationale above.
+    function _convertToShares(uint256 assets, Math.Rounding rounding)
+        internal
+        view
+        override
+        returns (uint256)
+    {
+        return assets.mulDiv(
+            totalSupply() + _pendingFeeShares() + 10 ** _decimalsOffset(),
+            totalAssets() + 1,
+            rounding
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────
     // 🌟 STREAMING FEE — core innovation of V2
     // ─────────────────────────────────────────────────────────────
 
@@ -370,6 +417,13 @@ contract VaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     /// @dev Off-chain consumers (frontend / Keeper bot / DeFiLlama) can show "accrued but not realized".
     ///      Returns 0 if share price has not grown since last accrual (loss tolerance — see [[1]] below).
     function pendingFeeShares() external view returns (uint256) {
+        return _pendingFeeShares();
+    }
+
+    /// @dev V2.1.2 — internal variant of `pendingFeeShares()` so the view-function
+    ///      overrides (`_convertToAssets` / `_convertToShares`) can reuse it without
+    ///      an external self-call. Identical semantics to the external wrapper.
+    function _pendingFeeShares() internal view returns (uint256) {
         if (totalSupply() == 0) return 0;
         uint256 sp = _calcSharePrice();
         if (sp <= lastSharePrice) return 0;
