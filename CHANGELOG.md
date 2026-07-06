@@ -10,6 +10,19 @@ This project uses [Semantic Versioning](https://semver.org/). Contracts are **im
 
 Round-2 audit response for Soken **APY-2026-06-002** (V2.1.1 review, verdict REVIEW 78/100 with 25 new findings + 8 pre-release recommendations). All 8 recommendations addressed. Round-1 findings (16 total) remain fully mitigated.
 
+### Vault layer (`Vault.sol`)
+
+- **Accrue-aware view math** (informational, self-identified post-submission —
+  see `docs/SOKEN_AUDIT.md` §11.3.9). `_convertToAssets` / `_convertToShares`
+  overridden to include `_pendingFeeShares()` in the divisor so external view
+  helpers (`maxWithdraw` / `previewWithdraw` / `previewRedeem` / `convertToAssets`)
+  reflect the dilution that `_accrue()` would apply on the next transactional
+  call. Fixes the observed `ERC4626ExceededMaxWithdraw` revert on frontend "MAX"
+  buttons in the V2.1.1-dev vault (Arbitrum). Transactional path (`_deposit` /
+  `_withdraw` / `mint` / `redeem`) is unaffected — those paths call `_accrue()`
+  before conversion, so `_pendingFeeShares()` returns 0 → override is a no-op
+  there. Natural extension of Soken F-01 (accrue-BEFORE-preview).
+
 ### Strategy layer (`BaseStrategy` + 5 concrete adapters)
 
 - **On-chain Chainlink `minOut` floor** (F-04-MEV.1 / N-03) — `_computeMinOutFloor` derives a fair-price minimum from Chainlink (preferred) or Owner-set fallback (long-tail tokens), reduced by per-token slippage (default 5%, `MAX_SLIPPAGE_BPS_CAP = 10%`). `_swapAndReinvest` reverts `MinOutBelowFloor` if the Keeper-supplied `minOut` is below the floor. New setters: `setRewardPriceFeed`, `setRewardFallbackPrice`, `setRewardMaxSlippage` (all `onlyVaultOwner`).
@@ -35,8 +48,9 @@ Round-2 audit response for Soken **APY-2026-06-002** (V2.1.1 review, verdict REV
 
 ### Tests
 
-- 36 new mitigation-specific specs in `test/v2/Strategy.mitigations.spec.ts`.
-- `npx hardhat test` on `apyee-protocol` at tag `v2.1.2`: **139 passing / 9 pending / 0 regression**. Pre-existing 103 V2 specs unchanged.
+- 36 new mitigation-specific specs in `test/v2/Strategy.mitigations.spec.ts` (8 Soken recommendations).
+- 4 additional specs in `test/v2/Vault.maxWithdraw.spec.ts` (fix #9).
+- `npx hardhat test` on `apyee-protocol` at tag `v2.1.2`: **143 passing / 9 pending / 0 regression**. Pre-existing 103 V2 specs unchanged.
 
 ### Deployment status
 
