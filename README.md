@@ -2,7 +2,7 @@
 
 > Non-custodial, AI-powered stablecoin yield aggregator — ERC-4626 Vault.
 
-**Website**: [apyee.com](https://apyee.com) &nbsp;·&nbsp; **Source (HEAD)**: [`v2.1.2`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v2.1.2) &nbsp;·&nbsp; **Prod deployed**: `v2.0.0` &nbsp;·&nbsp; **License**: BUSL-1.1 &nbsp;·&nbsp; **Security**: [`support@apyee.com`](mailto:support@apyee.com)
+**Website**: [apyee.com](https://apyee.com) &nbsp;·&nbsp; **Source (HEAD)**: [`v2.1.3`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v2.1.3) &nbsp;·&nbsp; **Prod deployed**: `v2.0.0` &nbsp;·&nbsp; **License**: BUSL-1.1 &nbsp;·&nbsp; **Security**: [`support@apyee.com`](mailto:support@apyee.com)
 
 Apyee allocates user-deposited USDC across whitelisted DeFi lending strategies
 on Ethereum, Base, Arbitrum, and BNB Chain. The Vault is **immutable** (no
@@ -11,7 +11,7 @@ paths do not exist.
 
 ---
 
-## Status — Soft Launch (v2.0.0, 2026-06) · Audit remediation (v2.1 → v2.1.2)
+## Status — Soft Launch (v2.0.0, 2026-06) · Audit remediation (v2.1 → v2.1.3)
 
 V2 introduces a **streaming performance fee** and a **tier-based allocation
 cap** so a single Solidity source can produce multiple deployment configs
@@ -22,11 +22,12 @@ chains plus Aggressive on Base.
 
 - [`v2.1.0`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v2.1.0) — Soken **APY-2026-06-001** round-1 remediation (16 findings, all mitigated). See [`docs/SOKEN_AUDIT.md`](docs/SOKEN_AUDIT.md) §1–§10.
 - [`v2.1.1`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v2.1.1) — F-04 follow-up (multi-hop reward-token swap path).
-- [`v2.1.2`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v2.1.2) — Soken **APY-2026-06-002** round-2 remediation (8 pre-release recommendations + 1 self-identified accrue-aware view fix). See `SOKEN_AUDIT.md` §11 and `TRUST_MODEL.md` §9. **Awaiting Soken re-review**.
+- [`v2.1.2`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v2.1.2) — Soken **APY-2026-06-002** round-2 remediation. **Verdict PASS 88/100** — 8 pre-release recommendations + 1 self-identified accrue-aware view fix (#9) closed; the round-2 report flagged 2 Low + 5 Informational residuals, none affecting principal. See `SOKEN_AUDIT.md` §11 and `TRUST_MODEL.md` §9.
+- [`v2.1.3`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v2.1.3) — round-2 residual response. Applies the two actionable one-line changes Soken recommended (F-902 fix-#9 invariant restore, F-901 pre-existing pause-gap hardening) plus comment/doc tightenings for F-i01 / F-i02 / F-i04 / F-903 / F-i03. See `SOKEN_AUDIT.md` §12. **Awaiting Soken diff-confirmation addendum extending APY-2026-06-002 to cover v2.1.3** — required so the Blockaid verify-project submission package cites a report that matches the deployed bytecode.
 
 Prod-deployed vaults listed below are still at `v2.0.0` (source of the original
-Soft Launch audit round). Migration to `v2.1.2-prod` will follow after Soken
-signs off on round-2.
+Soft Launch audit round). Migration to `v2.1.3-prod` will follow after Soken's
+addendum confirms the v2.1.3 diff.
 
 ### What's verified
 
@@ -39,14 +40,14 @@ signs off on round-2.
 | Static analysis (Slither 0.11.5) | **Complete — no real findings** | [docs/STATIC_ANALYSIS.md](docs/STATIC_ANALYSIS.md): 51 patterns surfaced, all classified as false positives or known design (acknowledged inline). Reproducible via `slither .` |
 | Streaming-fee fuzz harness (Foundry 1.7.1) | **Complete — 100K iterations, zero failures** | [docs/FUZZ_REPORT.md](docs/FUZZ_REPORT.md): 10 properties × 10,000 randomized runs covering the four `_accrue()` fixes plus seven adjacent invariants (`MAX_FEE` bound, pause-does-not-block-withdraw, etc.). Reproducible via `forge test --fuzz-runs 10000` |
 | External solo audit (Soken) — round 1 (V2.0 → V2.1) | **Complete — 16 findings, all mitigated at `v2.1.0` / `v2.1.1`** | [docs/SOKEN_AUDIT.md](docs/SOKEN_AUDIT.md) §1–§10 — finding-to-fix mapping, per-severity acceptance criteria. Reproducible via `git checkout v2.1.1 && npx hardhat test`. |
-| External solo audit (Soken) — round 2 (V2.1.1 F-04 surface) | **Remediation complete at `v2.1.2` — awaiting re-review** | [docs/SOKEN_AUDIT.md](docs/SOKEN_AUDIT.md) §11 — 8 pre-release recommendations + 1 self-identified fix. 143 passing / 0 regression. Reproducible via `git checkout v2.1.2 && npx hardhat test`. |
+| External solo audit (Soken) — round 2 (V2.1.1 F-04 surface) | **Verdict PASS 88/100 at `v2.1.2`; residuals addressed at `v2.1.3` — awaiting diff-confirmation addendum** | [docs/SOKEN_AUDIT.md](docs/SOKEN_AUDIT.md) §11 (round-2 remediation) + §12 (v2.1.3 residual response). 149 passing / 0 regression + Foundry fuzz 10 × 10k green. Reproducible via `git checkout v2.1.3 && npx hardhat test && forge test --fuzz-runs 10000`. |
 
 ### What's pending
 
 | Item | Status |
 |---|---|
-| Soken audit re-review of `v2.1.2` | Submitted 2026-07 — awaiting response |
-| v2.1.2-prod migration (dev → prod redeploy + user migration) | Gated on Soken sign-off |
+| Soken diff-confirmation addendum for `v2.1.3` | Submitted 2026-07 — awaiting response |
+| v2.1.3-prod migration (dev → prod redeploy + user migration) | Gated on Soken addendum + Blockaid verify-project submission |
 | Bug bounty (Immunefi) | In preparation |
 | Contest audit (Code4rena / Sherlock / Cantina) | Planned post-Soken sign-off |
 
@@ -98,7 +99,7 @@ Machine-readable: [`deployments/v2-prod/`](deployments/v2-prod/)
 | BNB Chain | Balanced | `0x0e5102ecd1cb960eC62659DFA8Fa9a8349a777fD` | [bscscan](https://bscscan.com/address/0x0e5102ecd1cb960eC62659DFA8Fa9a8349a777fD#code) |
 
 All Vaults are **verified** on the respective explorer. Source identical to
-this repo at tag [`v2.0.0`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v2.0.0). The current HEAD (`v2.1.2`) contains post-Launch
+this repo at tag [`v2.0.0`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v2.0.0). The current HEAD (`v2.1.3`) contains post-Launch
 audit remediation and is not yet reflected in these prod addresses (see the
 "Audit remediation" note above).
 
@@ -150,11 +151,11 @@ contracts/strategies/FluidStrategy.sol
 contracts/libraries/Errors.sol
 ```
 
-`v2.1.2` additions to the in-scope set: `contracts/interfaces/external/IChainlinkAggregator.sol` (2 view functions used by `BaseStrategy._computeMinOutFloor`).
+`v2.1.2` additions to the in-scope set: `contracts/interfaces/external/IChainlinkAggregator.sol` (2 view functions used by `BaseStrategy._computeMinOutFloor`). `v2.1.3` does not add any file to the in-scope set.
 
 **Audit history**:
 - Round 1 — Soken **APY-2026-06-001** (audited commit `v2.0.0`, remediated at `v2.1.0` / `v2.1.1`). See `docs/SOKEN_AUDIT.md` §1–§10 and the [`v2.1.0`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v2.1.0) / [`v2.1.1`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v2.1.1) release notes.
-- Round 2 — Soken **APY-2026-06-002** (audited commit `v2.1.1`, remediated at `v2.1.2`). See `docs/SOKEN_AUDIT.md` §11 for the 8 recommendations + 1 self-identified fix (accrue-aware view math). Awaiting Soken re-review.
+- Round 2 — Soken **APY-2026-06-002** (audited commit `v2.1.1`, remediated at `v2.1.2`, verdict **PASS 88/100**). See `docs/SOKEN_AUDIT.md` §11 for the 8 recommendations + 1 self-identified fix (accrue-aware view math). Residuals (2 Low + 5 Info, none affecting principal) are addressed at [`v2.1.3`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v2.1.3); see `docs/SOKEN_AUDIT.md` §12. Awaiting Soken diff-confirmation addendum extending the report to cover v2.1.3.
 
 **Out-of-scope**: `contracts/mocks/`, `test/`, `scripts/`, `deployments/`,
 `contracts/interfaces/external/*` **except** `IChainlinkAggregator.sol` (external protocol interfaces re-declared
