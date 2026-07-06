@@ -6,6 +6,44 @@ This project uses [Semantic Versioning](https://semver.org/). Contracts are **im
 
 ---
 
+## v2.1.2 — Soken round-2 remediation (2026-07-06)
+
+Round-2 audit response for Soken **APY-2026-06-002** (V2.1.1 review, verdict REVIEW 78/100 with 25 new findings + 8 pre-release recommendations). All 8 recommendations addressed. Round-1 findings (16 total) remain fully mitigated.
+
+### Strategy layer (`BaseStrategy` + 5 concrete adapters)
+
+- **On-chain Chainlink `minOut` floor** (F-04-MEV.1 / N-03) — `_computeMinOutFloor` derives a fair-price minimum from Chainlink (preferred) or Owner-set fallback (long-tail tokens), reduced by per-token slippage (default 5%, `MAX_SLIPPAGE_BPS_CAP = 10%`). `_swapAndReinvest` reverts `MinOutBelowFloor` if the Keeper-supplied `minOut` is below the floor. New setters: `setRewardPriceFeed`, `setRewardFallbackPrice`, `setRewardMaxSlippage` (all `onlyVaultOwner`).
+- **Intermediate-hop whitelist** (F-04-MEV.2 / N-01 / N-SP-01) — Owner-managed `allowedHopToken`; `_validateSwapPath` iterates middle hops and reverts `HopTokenNotWhitelisted`. Endpoint tokens (rewardToken, USDC) remain bound by the existing endpoint check.
+- **Pause propagation** (N-02) — `whenVaultNotPaused` modifier on all 5 concrete `claimAndCompound`. User `withdraw` remains pause-free (invariant unchanged).
+- **`rewardToken == underlyingAsset` skip-swap branch** — replaces the prior `AssetMismatch` revert with a direct `_deposit` path when the distributor pays yield in USDC.
+- **Owner rescue helper** — `sweepIdleAssetToVault()` (`onlyVaultOwner`). Moves only `underlyingAsset`; destination hardcoded to `vault`; reward / receipt tokens untouchable.
+- **Constructor guards** (R-01 / R-02) — `dexRouter` `extcodesize > 0` check; `DEPLOY_CHAIN_ID` immutable + `onlyDeployChain` on every fund-moving external; `DexRouterConfigured(dexRouter, chainId, codeSize)` event emitted at construction.
+
+### Interfaces & errors
+
+- **New**: `contracts/interfaces/external/IChainlinkAggregator.sol` (2 view functions: `decimals`, `latestRoundData`).
+- **Errors added**: `MinOutBelowFloor`, `PriceFeedStale`, `InvalidPrice`, `MinOutFloorUnconfigured`, `NotOwner`, `HopTokenNotWhitelisted`, `VaultPaused`, `DexRouterNotContract`, `WrongChain`.
+
+### Build
+
+- `foundry.toml` — `via_ir = false` → `true` (M-BUILD-1). `hardhat.config.ts` already had `viaIR: true` since V2.1.1.
+
+### Docs
+
+- `docs/TRUST_MODEL.md` — §9 appended (V2.1.2 additions). §1–§8 (V2.1 F-16 response) unchanged. §9.7 documents the 4 residual risks per F-04-MEV.4.
+- `docs/SOKEN_AUDIT.md` — §11 appended (V2.1.2 remediation full section: finding-to-fix mapping, per-recommendation fix map, acceptance criteria).
+
+### Tests
+
+- 36 new mitigation-specific specs in `test/v2/Strategy.mitigations.spec.ts`.
+- `npx hardhat test` on `apyee-protocol` at tag `v2.1.2`: **139 passing / 9 pending / 0 regression**. Pre-existing 103 V2 specs unchanged.
+
+### Deployment status
+
+- V2.1.2 dev vault redeployment: **pending** (separate release track). Prod redeployment gated on Soken review + operational readiness.
+
+---
+
 ## v2.0.0 — V2 Soft Launch (2026-06)
 
 V2 generation. Single audited Solidity source parameterizable per tier

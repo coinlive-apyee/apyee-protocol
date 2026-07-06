@@ -4,7 +4,7 @@
 >
 > **Audit Report (round 2)**: Soken APY-2026-06-002 · **Date**: 2026-06-30 · **Audited commit**: V2.1.1 source at tag [`v2.1.1`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v2.1.1) · **Verdict**: REVIEW 78/100 (25 new findings on F-04 surface, 8 pre-release recommendations)
 >
-> **Released tags**: [`v2.1.0`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v2.1.0) (round-1 initial remediation) · [`v2.1.1`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v2.1.1) (round-1 F-04 follow-up — multi-hop swap path) · `v2.1.2` (round-2 remediation — this document §11)
+> **Released tags**: [`v2.1.0`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v2.1.0) (round-1 initial remediation) · [`v2.1.1`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v2.1.1) (round-1 F-04 follow-up — multi-hop swap path) · [`v2.1.2`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v2.1.2) (round-2 remediation — this document §11)
 >
 > **Review target**: `v2.1.2` · **Status (2026-07-06)**: V2.1.2 remediation complete, all 8 pre-release recommendations addressed, awaiting Soken re-review.
 
@@ -369,9 +369,10 @@ Pre-release recommendations (numbered per Soken's list, all addressed):
 ### 11.3 Fix map (all 8)
 
 Each subsection: **finding link → code location → test coverage → trust-model
-reference**. The V2.1.2 test suite runs at **328 passing / 0 regression** against
-the V2.1.1 baseline (16 pre-existing suites unchanged; 36 new mitigation-specific
-tests added).
+reference**. The V2.1.2 test suite on this repository (`apyee-protocol`, the
+audit target) runs at **139 passing / 9 pending / 0 regression** against the
+V2.1.1 baseline (103 pre-existing V2 tests unchanged; 36 new mitigation-specific
+tests added). Reproduce with `npx hardhat test` at tag `v2.1.2`.
 
 #### 11.3.1 On-chain Chainlink oracle floor (Recs #1 / F-04-MEV.1 / N-03)
 
@@ -439,7 +440,7 @@ tests added).
   already had `viaIR: true` since V2.1.1 (needed for FluidStrategy stack depth); this
   release adds an audit-response comment linking the setting to M-BUILD-1.
 - **Tests**: whole-suite compile + regression pass (`hardhat compile` succeeds under
-  Yul IR; 328 test passing).
+  Yul IR; 139 test passing on this repo — see §11.3 preamble for the count breakdown).
 
 #### 11.3.7 TRUST_MODEL documentation refresh (Rec #7 / F-04-MEV.4)
 
@@ -489,5 +490,6 @@ All criteria below are evaluated against tag **`v2.1.2`**.
    rejected at deploy, `address(0)` is still accepted as opt-out, and
    `onlyDeployChain` reverts `WrongChain` off the deploy chain.
 
-Regression check: run the full V2.1.1 test suite against V2.1.2 — 292 pre-existing
-tests must still pass (V2.1.2 adds 36 new specs, total 328).
+Regression check: run the full V2.1.1 test suite against V2.1.2 on this repo — 103
+pre-existing V2 tests must still pass (V2.1.2 adds 36 new specs, total 139 passing
+/ 9 pending on `npx hardhat test`).
