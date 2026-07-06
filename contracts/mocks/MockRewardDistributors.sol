@@ -152,6 +152,41 @@ contract MockFluidMerkleDistributor {
     }
 }
 
+/// @notice Test-only Chainlink aggregator. Owner-controlled `answer` and `updatedAt`.
+///         Used by V2.1.2 mitigation specs to exercise the on-chain minOut floor.
+contract MockChainlinkAggregator {
+    uint8 private immutable _decimals;
+    int256 private _answer;
+    uint256 private _updatedAt;
+
+    constructor(uint8 decimals_) {
+        _decimals = decimals_;
+    }
+
+    function decimals() external view returns (uint8) {
+        return _decimals;
+    }
+
+    function setLatestAnswer(int256 answer_, uint256 updatedAt_) external {
+        _answer = answer_;
+        _updatedAt = updatedAt_;
+    }
+
+    function latestRoundData()
+        external
+        view
+        returns (
+            uint80 roundId,
+            int256 answer,
+            uint256 startedAt,
+            uint256 updatedAt,
+            uint80 answeredInRound
+        )
+    {
+        return (1, _answer, _updatedAt, _updatedAt, 1);
+    }
+}
+
 /// @notice Mock UniswapV3 SwapRouter02. Treats `path` linearly: tokenIn at offset 0, tokenOut
 ///         at the last 20 bytes. Mints USDC at the recipient at a 1:1e-12 ratio (1e18 reward →
 ///         1e6 USDC) — close enough to "swap happened, path was forwarded correctly" for the

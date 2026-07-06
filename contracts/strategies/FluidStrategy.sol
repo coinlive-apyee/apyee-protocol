@@ -148,7 +148,7 @@ contract FluidStrategy is BaseStrategy {
         bytes calldata metadata,
         bytes calldata swapPath,
         uint256 minOut
-    ) external onlyKeeper nonReentrant returns (uint256 claimed, uint256 swapped) {
+    ) external onlyKeeper onlyDeployChain whenVaultNotPaused nonReentrant returns (uint256 claimed, uint256 swapped) {
         if (address(fluidDistributor) == address(0) || address(rewardToken) == address(0)) {
             return (0, 0);
         }

@@ -1,10 +1,12 @@
-# Soken Audit Remediation — V2.0 → V2.1
+# Soken Audit Remediation — V2.0 → V2.1 → V2.1.2
 
-> **Audit Report**: Soken APY-2026-06-001 · **Date**: 2026-06-23 · **Audited commit**: V2.0 source at tag [`v2.0.0`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v2.0.0)
+> **Audit Report (round 1)**: Soken APY-2026-06-001 · **Date**: 2026-06-23 · **Audited commit**: V2.0 source at tag [`v2.0.0`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v2.0.0)
 >
-> **Released tags**: [`v2.1.0`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v2.1.0) (initial remediation) · [`v2.1.1`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v2.1.1) (F-04 follow-up — multi-hop swap path)
+> **Audit Report (round 2)**: Soken APY-2026-06-002 · **Date**: 2026-06-30 · **Audited commit**: V2.1.1 source at tag [`v2.1.1`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v2.1.1) · **Verdict**: REVIEW 78/100 (25 new findings on F-04 surface, 8 pre-release recommendations)
 >
-> **Review target**: `v2.1.1` · **Status (2026-06-25)**: both tags public, awaiting Soken remediation review.
+> **Released tags**: [`v2.1.0`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v2.1.0) (round-1 initial remediation) · [`v2.1.1`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v2.1.1) (round-1 F-04 follow-up — multi-hop swap path) · `v2.1.2` (round-2 remediation — this document §11)
+>
+> **Review target**: `v2.1.2` · **Status (2026-07-06)**: V2.1.2 remediation complete, all 8 pre-release recommendations addressed, awaiting Soken re-review.
 
 This document maps every Soken finding to the V2.1 fix commit + the new test that
 catches a regression on the same root cause. For each fix the inverse pre-fix
@@ -315,3 +317,177 @@ initial `v2.1.0`; see §F-04 follow-up for the rationale).
    library cleanup, and trust-model phrasing.
 6. **Informational acknowledged**: no action — Soken to confirm the acknowledgements are
    appropriately documented.
+
+---
+
+## 11. V2.1.2 remediation — Soken APY-2026-06-002 response
+
+> **Round-2 audit target**: tag `v2.1.1`. Soken re-examined the F-04 (multi-hop
+> reward claim) attack surface introduced in V2.1.1 and returned verdict **REVIEW
+> 78/100** with 25 new findings and 8 pre-release recommendations. V2.1.2 addresses
+> all 8. Original 16 round-1 findings remain fully mitigated — nothing regresses.
+
+### 11.1 Summary by severity
+
+| Severity | Count | Status |
+|---|---:|---|
+| Medium | 4 | All fixed |
+| Low | 6 | All fixed / accepted |
+| Informational (code-change) | 5 | All addressed |
+| Informational (acknowledged) | 10 | Documented |
+| **Total new findings** | **25** | **15 fixed + 10 acknowledged** |
+| **Pre-release recommendations** | **8** | **All 8 implemented** |
+
+### 11.2 Finding → mitigation matrix
+
+Ordered by severity, then finding ID.
+
+| Finding | Severity | Mitigation type | Location |
+|---|---|---|---|
+| **F-04-MEV.1** (Keeper `minOut` no oracle floor) | Medium | On-chain enforcement | `BaseStrategy._computeMinOutFloor` + `_swapAndReinvest` floor check |
+| **F-04-MEV.2** (Middle-hop unrestricted) | Medium | On-chain whitelist | `BaseStrategy._validateSwapPath` + `allowedHopToken` |
+| **F-04-MEV.4** (TRUST_MODEL doc requirement) | Medium | Documentation | `docs/TRUST_MODEL.md` §9 (this release) |
+| **M-BUILD-1** (`via_ir = false`) | Medium | Build config | `foundry.toml` — `via_ir = true` (this release). `hardhat.config.ts` already `viaIR: true` since V2.1.1. |
+| **N-01 / N-SP-01** (Path middle-hop restriction) | Low | On-chain whitelist | Same as F-04-MEV.2 |
+| **N-02** (`Vault.paused()` bypass on strategy) | Low | Modifier propagation | `BaseStrategy.whenVaultNotPaused` on all 5 `claimAndCompound` |
+| **N-03** (`minOut = 0` defense) | Low | On-chain enforcement | Automatic revert via `_computeMinOutFloor` (0 < floor for `amountIn > 0`) |
+| **R-01 / R-02** (Router pin) | Low | Constructor guard + event | `BaseStrategy` constructor `extcodesize` check + `DexRouterConfigured` event |
+| **F-04-MEV.4 residual** (TRUST_MODEL sections) | Low | Documentation | `docs/TRUST_MODEL.md` §9.7 |
+| **L-BUILD-1 / L-BUILD-2** (Build hardening) | Low | Build config + comment | `foundry.toml` `via_ir = true` + `hardhat.config.ts` audit-response comment |
+
+Pre-release recommendations (numbered per Soken's list, all addressed):
+
+1. On-chain oracle floor for reward-token swaps → §11.3.1
+2. Intermediate hop whitelist → §11.3.2
+3. Pause-gate strategy claim path → §11.3.3
+4. Skip-swap branch for reward==underlying → §11.3.4
+5. Owner-only idle-asset rescue helper → §11.3.5
+6. `via_ir = true` build setting → §11.3.6
+7. TRUST_MODEL documentation refresh → §11.3.7
+8. Constructor guards (router code check + chain pinning) → §11.3.8
+
+### 11.3 Fix map (all 8)
+
+Each subsection: **finding link → code location → test coverage → trust-model
+reference**. The V2.1.2 test suite runs at **328 passing / 0 regression** against
+the V2.1.1 baseline (16 pre-existing suites unchanged; 36 new mitigation-specific
+tests added).
+
+#### 11.3.1 On-chain Chainlink oracle floor (Recs #1 / F-04-MEV.1 / N-03)
+
+- **Code**: `BaseStrategy.sol` — `rewardPriceFeed` / `rewardFallbackPriceE8` /
+  `rewardMaxSlippageBps` mappings (Owner-set via `onlyVaultOwner`); constants
+  `DEFAULT_MAX_SLIPPAGE_BPS = 500`, `MAX_SLIPPAGE_BPS_CAP = 1000`,
+  `PRICE_STALENESS = 1 days`; `_computeMinOutFloor(rewardToken, amountIn)` helper;
+  floor check inside `_swapAndReinvest`.
+- **New errors**: `MinOutBelowFloor(minOut, floor)`, `PriceFeedStale(updatedAt,
+  blockTs)`, `InvalidPrice`, `MinOutFloorUnconfigured(rewardToken)`, `NotOwner`.
+- **New interface**: `contracts/interfaces/external/IChainlinkAggregator.sol` (2 view
+  functions — `decimals()`, `latestRoundData()`).
+- **Tests**: `Strategy.mitigations.spec.ts` — 11 specs covering fallback price path,
+  Chainlink feed path (fresh / stale / negative), unconfigured revert, custom slippage
+  override, slippage cap enforcement, and 3 setter access-control tests.
+- **Trust model reference**: `TRUST_MODEL.md` §9.2.C, §9.7.2, §9.7.4.
+
+#### 11.3.2 Intermediate-hop whitelist (Recs #2 / F-04-MEV.2 / N-01 / N-SP-01)
+
+- **Code**: `BaseStrategy.sol` — `allowedHopToken` mapping + `setAllowedHopToken`
+  (Owner-only) + `_validateSwapPath` middle-hop iteration.
+- **New error**: `HopTokenNotWhitelisted(hopToken)`.
+- **Tests**: 8 specs — single-hop bypass, multi-hop whitelisted OK, first-hop revert,
+  second-middle-hop revert, de-whitelist takes effect immediately, event emit,
+  onlyOwner, zero-address rejection.
+- **Trust model reference**: `TRUST_MODEL.md` §9.2.B.
+
+#### 11.3.3 Pause propagation to strategies (Recs #3 / N-02)
+
+- **Code**: `BaseStrategy.sol` — `IVaultPausedView` interface + `whenVaultNotPaused`
+  modifier. Applied to `claimAndCompound` on all 5 concrete strategies
+  (`CompoundV3Strategy`, `AaveV3Strategy`, `VenusStrategy`, `MorphoStrategy`,
+  `FluidStrategy`).
+- **New error**: `VaultPaused`.
+- **Tests**: 3 specs — paused vault blocks `claimAndCompound`, unpaused resumes it,
+  paused vault still allows user `withdraw` (invariant sanity check).
+- **Trust model reference**: `TRUST_MODEL.md` §9.3.
+
+#### 11.3.4 Reward-token == underlying skip-swap (Rec #4)
+
+- **Code**: `BaseStrategy._swapAndReinvest` — replaced `AssetMismatch` revert with a
+  branch: when `rewardToken == underlyingAsset`, skip DEX interaction / path
+  validation / floor check and route straight to `_deposit`. Event still emits with
+  `amountIn == amountOut`.
+- **Tests**: 4 specs — skip-swap re-deposits correctly, strategy balance grows by
+  reward amount, garbage swap path silently ignored, minOut floor bypassed on this
+  branch.
+- **Trust model reference**: `TRUST_MODEL.md` §9.4.
+
+#### 11.3.5 Owner rescue helper `sweepIdleAssetToVault()` (Rec #5)
+
+- **Code**: `BaseStrategy.sweepIdleAssetToVault()` — Owner-only, `onlyVaultOwner` +
+  `nonReentrant` + `onlyDeployChain`. Destination is hardcoded to `vault` (not
+  parameterised). Only moves `underlyingAsset`; reward tokens and protocol receipt
+  tokens remain untouchable.
+- **New event**: `IdleAssetSwept(amount)`.
+- **Tests**: 5 specs — forwards stray USDC to vault, zero-balance no-op idempotent,
+  does not touch reward token, onlyOwner, signature invariant (zero args → destination
+  cannot be spoofed).
+- **Trust model reference**: `TRUST_MODEL.md` §9.5.
+
+#### 11.3.6 `via_ir = true` build setting (Rec #6 / M-BUILD-1 / L-BUILD-1)
+
+- **Code**: `foundry.toml` line 11 — `via_ir = true` (was `false`). `hardhat.config.ts`
+  already had `viaIR: true` since V2.1.1 (needed for FluidStrategy stack depth); this
+  release adds an audit-response comment linking the setting to M-BUILD-1.
+- **Tests**: whole-suite compile + regression pass (`hardhat compile` succeeds under
+  Yul IR; 328 test passing).
+
+#### 11.3.7 TRUST_MODEL documentation refresh (Rec #7 / F-04-MEV.4)
+
+- **Doc**: `docs/TRUST_MODEL.md` — appended §9 (V2.1.2 additions). §9.1 extends the
+  Owner-power enumeration; §9.2 documents the 3-layer MEV defense; §9.3–9.6 cover
+  each new invariant; §9.7 enumerates 4 residual risks with on-chain limit + off-chain
+  requirement structure; §9.8 extends the Yes/No signal table.
+- **Sections §1–§8 unchanged** from V2.1 (F-16 response) — nothing removed or
+  relaxed.
+
+#### 11.3.8 Constructor guards (Rec #8 / R-01 / R-02)
+
+- **Code**: `BaseStrategy` constructor — `extcodesize` check on `dexRouter_` (rejects
+  EOA / self-destructed contracts); `DEPLOY_CHAIN_ID = block.chainid` captured as
+  immutable; `DexRouterConfigured(dexRouter, chainId, dexRouterCodeSize)` event
+  emitted at construction. `onlyDeployChain` modifier applied to all 5 fund-moving
+  externals + `sweepIdleAssetToVault` + all 5 `claimAndCompound`.
+- **New errors**: `DexRouterNotContract(dexRouter)`, `WrongChain(expected, actual)`.
+- **Tests**: 5 specs — EOA dexRouter rejected, `address(0)` accepted as opt-out,
+  event emitted with correct args, `DEPLOY_CHAIN_ID` matches current chain, fund-moving
+  surface passes on the deploy chain.
+- **Trust model reference**: `TRUST_MODEL.md` §9.6.
+
+### 11.4 Acceptance criteria for the V2.1.2 review
+
+All criteria below are evaluated against tag **`v2.1.2`**.
+
+1. **F-04-MEV.1 (Rec #1)**: run `Strategy.mitigations.spec.ts` — 11 specs under
+   *"minOut floor"*. All must pass. Manually verify `_computeMinOutFloor` uses
+   Chainlink preferentially, falls back to Owner-set price, and rejects negative /
+   stale / zero.
+2. **F-04-MEV.2 (Rec #2)**: 8 specs under *"intermediate-hop whitelist"*. Verify
+   endpoint tokens (rewardToken, USDC) remain bound by `_validateSwapPath` and are
+   NOT subject to the whitelist (only middle hops).
+3. **N-02 (Rec #3)**: 3 specs under *"pause-gate claimAndCompound"*. Confirm all 5
+   concrete strategies apply `whenVaultNotPaused` and that user `withdraw` still
+   works under pause.
+4. **Rec #4**: 4 specs under *"rewardToken == underlying skip-swap"*. Verify the
+   branch never touches `dexRouter` and re-deposits `amountIn` directly.
+5. **Rec #5**: 5 specs under *"sweepIdleAssetToVault"*. Verify the destination is
+   hardcoded (function signature has 0 args) and reward tokens are untouchable.
+6. **M-BUILD-1 (Rec #6)**: `foundry.toml` shows `via_ir = true`; `hardhat compile`
+   succeeds; whole suite passes.
+7. **F-04-MEV.4 (Rec #7)**: `TRUST_MODEL.md` §9 documents all 8 mitigations and 4
+   residual risks with the finding matrix in §9 preamble.
+8. **Rec #8 / R-01 / R-02**: 5 specs under *"constructor guards"*. Verify EOA is
+   rejected at deploy, `address(0)` is still accepted as opt-out, and
+   `onlyDeployChain` reverts `WrongChain` off the deploy chain.
+
+Regression check: run the full V2.1.1 test suite against V2.1.2 — 292 pre-existing
+tests must still pass (V2.1.2 adds 36 new specs, total 328).

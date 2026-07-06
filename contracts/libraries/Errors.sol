@@ -37,6 +37,46 @@ library Errors {
     // V2.1.1 (multi-hop swap): malformed swapPath, wrong endpoint binding, or under-length.
     error InvalidPath();
 
+    // V2.1.2 (Soken F-04-MEV.1): Keeper-supplied `minOut` fell below the on-chain fair-price
+    // floor derived from Chainlink or an Owner-set fallback. Prevents sandwich extraction.
+    error MinOutBelowFloor(uint256 minOut, uint256 floor);
+
+    // V2.1.2: Chainlink `updatedAt` older than PRICE_STALENESS threshold.
+    error PriceFeedStale(uint256 updatedAt, uint256 blockTs);
+
+    // V2.1.2: Chainlink `answer` <= 0 or fallback price 0.
+    error InvalidPrice();
+
+    // V2.1.2: neither Chainlink feed nor Owner-set fallback price configured for the
+    // reward token — Keeper cannot claim until Owner configures at least one.
+    error MinOutFloorUnconfigured(address rewardToken);
+
+    // V2.1.2: msg.sender is not the current Vault owner (dynamic read; supports Owner rotation).
+    error NotOwner();
+
+    // V2.1.2 (Soken N-01 / N-SP-01 / F-04-MEV.2): an intermediate hop token in the UniV3
+    // multi-hop swap path is not on the Owner-managed whitelist. Prevents Keeper from
+    // routing rewards through a rug / griefing / low-liquidity token that the Owner did
+    // not vet. Endpoint tokens (rewardToken, underlyingAsset) are still bound by
+    // `_validateSwapPath` — this error targets the middle tokens only.
+    error HopTokenNotWhitelisted(address hopToken);
+
+    // V2.1.2 (Soken N-02): the Vault is paused. `claimAndCompound` is a fund-moving
+    // Keeper action and must be halted while Guardian has the Vault paused. User
+    // withdraw is unaffected (Vault.sol re-declares it whenNotPaused-free).
+    error VaultPaused();
+
+    // V2.1.2 (Soken constructor guard): dexRouter address supplied at deploy time was
+    // an EOA / self-destructed contract / uninitialized address. Guarded at construction
+    // via `.code.length > 0`. Distinguishes "opt out of compounding" (address(0)) from
+    // "misconfigured deploy" (a real address with no code).
+    error DexRouterNotContract(address dexRouter);
+
+    // V2.1.2 (Soken constructor guard): the current `block.chainid` does not match the
+    // chain id captured at strategy deployment. Blocks replay of state-changing calls
+    // on a forked or wrong chain.
+    error WrongChain(uint256 expected, uint256 actual);
+
     // --- Allocation ---
     error AllocationExceeded(uint256 requested, uint256 max);
 }

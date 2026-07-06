@@ -132,7 +132,7 @@ contract MorphoStrategy is BaseStrategy {
         bytes32[] calldata proof,
         bytes calldata swapPath,
         uint256 minOut
-    ) external onlyKeeper nonReentrant returns (uint256 claimed, uint256 swapped) {
+    ) external onlyKeeper onlyDeployChain whenVaultNotPaused nonReentrant returns (uint256 claimed, uint256 swapped) {
         if (address(urd) == address(0)) return (0, 0);
         if (rewardToken == address(0)) revert Errors.ZeroAddress();
 

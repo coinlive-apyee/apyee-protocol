@@ -134,6 +134,8 @@ contract AaveV3Strategy is BaseStrategy {
     function claimAndCompound(bytes calldata swapPath, uint256 minOut)
         external
         onlyKeeper
+        onlyDeployChain
+        whenVaultNotPaused
         nonReentrant
         returns (uint256 claimed, uint256 swapped)
     {

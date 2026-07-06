@@ -25,6 +25,12 @@ const REWARD_AMOUNT = ethers.parseUnits("100", 18); // 100 reward tokens (18 dec
 const USDC_AMOUNT   = ethers.parseUnits("100", 6);  // mock router rate 1:1e-12 → 100 USDC
 const MIN_OUT       = ethers.parseUnits("99", 6);   // 1 % slippage cap
 
+/// V2.1.2 (Soken F-04-MEV.1): mocks use a 1:1e-12 router ratio → each reward token is
+/// worth exactly $1 USDC. Chainlink convention is USD price × 1e8, so fallback price
+/// = 1e8. Owner-set via `BaseStrategy.setRewardFallbackPrice` per reward token before
+/// the first claim.
+const FALLBACK_PRICE_E8 = 100_000_000n;
+
 function buildSinglehopPath(tokenIn: string, tokenOut: string, fee: number = 500): string {
   const feeHex = fee.toString(16).padStart(6, "0");
   return "0x" + tokenIn.slice(2).toLowerCase() + feeHex + tokenOut.slice(2).toLowerCase();
@@ -127,6 +133,7 @@ describe("Strategy.claimAndCompound — mock distributor unit suite", () => {
       await comp.mint(await rewards.getAddress(), REWARD_AMOUNT);
       await rewards.setOwed(await comet.getAddress(), await strat.getAddress(), REWARD_AMOUNT);
 
+      await strat.connect(fx.owner).setRewardFallbackPrice(await comp.getAddress(), FALLBACK_PRICE_E8);
       const swapPath = buildSinglehopPath(await comp.getAddress(), await usdc.getAddress());
       return { ...fx, strat, comp, swapPath };
     }
@@ -197,6 +204,7 @@ describe("Strategy.claimAndCompound — mock distributor unit suite", () => {
       await xvs.mint(await comptroller.getAddress(), REWARD_AMOUNT);
       await comptroller.setOwed(await strat.getAddress(), REWARD_AMOUNT);
 
+      await strat.connect(fx.owner).setRewardFallbackPrice(await xvs.getAddress(), FALLBACK_PRICE_E8);
       const swapPath = buildSinglehopPath(await xvs.getAddress(), await usdc.getAddress());
       return { ...fx, strat, xvs, swapPath };
     }
@@ -259,6 +267,7 @@ describe("Strategy.claimAndCompound — mock distributor unit suite", () => {
       await spk.mint(await controller.getAddress(), REWARD_AMOUNT);
       await controller.setOwed(await strat.getAddress(), await spk.getAddress(), REWARD_AMOUNT);
 
+      await strat.connect(fx.owner).setRewardFallbackPrice(await spk.getAddress(), FALLBACK_PRICE_E8);
       const swapPath = buildSinglehopPath(await spk.getAddress(), await usdc.getAddress());
       return { ...fx, strat, spk, swapPath };
     }
@@ -315,6 +324,7 @@ describe("Strategy.claimAndCompound — mock distributor unit suite", () => {
       await morpho.mint(await urd.getAddress(), REWARD_AMOUNT);
       await urd.setClaimable(await strat.getAddress(), await morpho.getAddress(), REWARD_AMOUNT);
 
+      await strat.connect(fx.owner).setRewardFallbackPrice(await morpho.getAddress(), FALLBACK_PRICE_E8);
       const swapPath = buildSinglehopPath(await morpho.getAddress(), await usdc.getAddress());
       return { ...fx, strat, morpho, swapPath };
     }
@@ -379,6 +389,7 @@ describe("Strategy.claimAndCompound — mock distributor unit suite", () => {
       await fluid.mint(await dist.getAddress(), REWARD_AMOUNT);
       await dist.setOwed(await strat.getAddress(), REWARD_AMOUNT);
 
+      await strat.connect(fx.owner).setRewardFallbackPrice(await fluid.getAddress(), FALLBACK_PRICE_E8);
       const swapPath = buildSinglehopPath(await fluid.getAddress(), await usdc.getAddress());
       return { ...fx, strat, fluid, swapPath };
     }
