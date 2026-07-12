@@ -610,3 +610,14 @@ Soken should confirm, in an addendum to APY-2026-06-002, that:
 6. Full suite reproduces at **338 passing / 0 failing** on `apyee-contracts`, **149 passing / 0 failing** on `apyee-protocol`, PoC re-run inside `test/v2/Vault.v213.spec.ts` (auditor may cross-reference against their `Fix9_SameBlockAccrueLatch.t.sol`).
 
 No change of audit scope; no new external interface; no state layout change; no allocation-cap change. Round-1 (16) and round-2 (25) findings remain fully mitigated. Zero regressions.
+
+### 12.6 Deployment Advisory §5 대응 (2026-07-09)
+
+Soken v2.1.3 addendum (`APY-2026-06-002-B`) §5 는 리뷰 중 관찰된 워킹트리 HEAD `7ee79fb` 를 "divergent HEAD" 로 언급하며 배포 pipeline 이 태그에서 빌드하는지 확인을 권고했다. 우리 측 실측 확인 결과:
+
+- `7ee79fb` = `test(fuzz): Foundry streaming-fee suite — 10 properties × 10K runs` (2026-06-18), V2.1.0 이전에 추가된 Foundry fuzz 테스트 커밋.
+- v2.1.3 tag (`e737779`) 의 **linear ancestor**. 브랜치 분리 없음, revert 없음.
+- 이후 18 개 커밋 (v2.1 remediation → v2.1.1 F-04 → v2.1.2 8-recs + fix #9 → v2.1.3 F-902/F-901/docs) 이 순차 승격됨.
+- v2.1.3 tag 안 `contracts/Vault.sol` L922 `investToStrategy` 는 `onlyKeeper whenNotPaused nonReentrant`. F-901 fix 정상 존재.
+
+배포 pipeline 은 `git checkout v2.1.3` 기반이다. v2.1.3 tag `e737779` 는 F-901 / F-902 fix 포함 확정 상태로 pin 되어 있으며 (2026-07-08 Soken diff 확인 요청 발송 시점부터 불변), `7ee79fb` 는 divergent 가 아닌 legacy ancestor 로 확인 완료 — 별도 브랜치 관리나 revert 불요.
