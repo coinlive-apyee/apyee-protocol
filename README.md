@@ -29,6 +29,39 @@ Prod migrated to `v2.1.3` on 2026-07-13 across all 4 chains (see addresses below
 Owner transferred to Gnosis Safe multi-sig (Ownable2Step Step A + Step B completed);
 v2.0.0 vaults are now retired.
 
+---
+
+## Security
+
+**Deployed bytecode**: tag [`v2.1.3`](https://github.com/coinlive-apyee/apyee-protocol/releases/tag/v2.1.3) — commit `e737779` — source-verified on Etherscan / BaseScan / Arbiscan / BscScan (see [Deployed Contracts](#deployed-contracts-v213-prod) for per-chain explorer links).
+
+**Public security page**: [apyee.com/security](https://apyee.com/security).
+
+**Solo audit — Soken (score trajectory 55 → 78 → 88 → 91)**:
+
+| Round | Audited tag | Verdict | Report |
+|---|---|---:|---|
+| APY-2026-06-001 (initial) | `v2.0.0` | 55/100 → 16 findings, all mitigated at `v2.1.0` / `v2.1.1` | [PDF](https://github.com/coinlive-apyee/apyee-protocol/releases/download/v2.1.3/Soken-APY-2026-06-001-V2-Initial-Audit.pdf) |
+| APY-2026-06-002 (round-2) | `v2.1.1` | 78/100 → 8 recommendations + self-identified fix #9 | [PDF](https://github.com/coinlive-apyee/apyee-protocol/releases/download/v2.1.3/Soken-APY-2026-06-002-V2.1.1-Review.pdf) |
+| APY-2026-06-002 (remediation) | `v2.1.2` | **PASS 88/100** (2 Low + 5 Informational residuals, none affecting principal) | [PDF](https://github.com/coinlive-apyee/apyee-protocol/releases/download/v2.1.3/Soken-APY-2026-06-002-V2.1.2-Remediation-PASS.pdf) |
+| APY-2026-06-002-B (residual review) | `v2.1.3` | **PASS 91/100** — 0 new findings (2026-07-09), extends coverage to deployed bytecode | [PDF](https://github.com/coinlive-apyee/apyee-protocol/releases/download/v2.1.3/Soken-APY-2026-06-002-B-V2.1.3-Residual-Review-PASS.pdf) |
+
+**Reproduce tests locally**:
+
+```bash
+git clone https://github.com/coinlive-apyee/apyee-protocol.git
+cd apyee-protocol
+git checkout v2.1.3
+npm install
+npx hardhat test    # → 149 passing / 9 pending / 0 failing
+```
+
+**Trust model** — what the Owner can and cannot do, line-by-line against `Vault.sol`: [docs/TRUST_MODEL.md](docs/TRUST_MODEL.md).
+
+**Responsible disclosure**: `support@apyee.com` — please do not open public issues for security bugs.
+
+---
+
 ### What's verified
 
 | Layer | Status | Evidence |
@@ -218,7 +251,7 @@ External dependencies (audited separately):
 | Max performance fee | 2000 bps (20%) | `MAX_FEE` (constant) |
 | Single-strategy absolute cap | per-tier (immutable) | `MAX_ALLOCATION_BPS_ABSOLUTE` |
 | Soft Launch per-chain deposit cap | $500K USDC (Conservative: $250K) | Per-deploy, Owner-configurable |
-| Default per-user deposit cap | $10K USDC | Owner-configurable per address |
+| Default per-user deposit cap | $25K USDC | Owner-configurable per address |
 
 ---
 
@@ -229,7 +262,7 @@ npm install
 cp .env.example .env   # fill in RPC keys for fork tests
 
 npm run compile
-npm run test               # full suite (78 passing, 4 fork specs require FORK=true)
+npm run test               # full suite (149 passing at v2.1.3, 4 fork specs require FORK=true)
 npm run test:v2:fork       # mainnet fork integration (Aave / Compound / Morpho / Fluid)
 npm run test:coverage      # solidity-coverage report
 ```
@@ -261,7 +294,7 @@ individually.
 
 ```bash
 FORK=true FORK_CHAIN=ethereum npx hardhat node             # in one terminal
-APYEE_GENERATION=v2-prod APYEE_TIER=balanced \
+APYEE_GENERATION=v2.1.3-prod APYEE_TIER=balanced \
   FORK_CHAIN=ethereum npx hardhat run scripts/deploy/v2/01-deploy-vault.ts --network localhost
 # 02 → 03 → 04 same pattern; FORK_CHAIN=base|arbitrum|bsc to switch chains
 # APYEE_TIER=aggressive for the Base aggressive tier
@@ -327,7 +360,7 @@ scripts/
 - **Security policy**: [SECURITY.md](SECURITY.md)
 - **Code of conduct**: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 - **Contributing**: [CONTRIBUTING.md](CONTRIBUTING.md)
-- **Machine-readable addresses**: [deployments/v2-prod/](deployments/v2-prod/)
+- **Machine-readable addresses**: [deployments/v2.1.3-prod/](deployments/v2.1.3-prod/)
 - **Design rationale (for audit)**: [docs/V2_DESIGN.md](docs/V2_DESIGN.md)
 - **Trust model — what the Owner can and cannot do**: [docs/TRUST_MODEL.md](docs/TRUST_MODEL.md)
 
