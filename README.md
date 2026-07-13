@@ -44,7 +44,7 @@ v2.0.0 vaults are now retired.
 | APY-2026-06-001 (initial) | `v2.0.0` | 55/100 → 16 findings, all mitigated at `v2.1.0` / `v2.1.1` | [PDF](https://github.com/coinlive-apyee/apyee-protocol/releases/download/v2.1.3/Soken-APY-2026-06-001-V2-Initial-Audit.pdf) |
 | APY-2026-06-002 (round-2) | `v2.1.1` | 78/100 → 8 recommendations + self-identified fix #9 | [PDF](https://github.com/coinlive-apyee/apyee-protocol/releases/download/v2.1.3/Soken-APY-2026-06-002-V2.1.1-Review.pdf) |
 | APY-2026-06-002 (remediation) | `v2.1.2` | **PASS 88/100** (2 Low + 5 Informational residuals, none affecting principal) | [PDF](https://github.com/coinlive-apyee/apyee-protocol/releases/download/v2.1.3/Soken-APY-2026-06-002-V2.1.2-Remediation-PASS.pdf) |
-| APY-2026-06-002-B (residual review) | `v2.1.3` | **PASS 91/100** — 0 new findings (2026-07-09), extends coverage to deployed bytecode | [PDF](https://github.com/coinlive-apyee/apyee-protocol/releases/download/v2.1.3/Soken-APY-2026-06-002-B-V2.1.3-Residual-Review-PASS.pdf) |
+| APY-2026-06-002-B (residual review) | `v2.1.3` | **PASS 91/100** — 0 new findings (2026-07-09), extends coverage to deployed bytecode | [PDF](https://github.com/coinlive-apyee/apyee-protocol/releases/download/v2.1.3/Soken-APY-2026-06-002-B-V2.1.3-Residual-Review-PASS.pdf) — also published by [Soken](https://github.com/sokenteam/Soken.io-smart_contract_audits/blob/main/Apyee_Security_Audit_v2.1.3.pdf) |
 
 **Reproduce tests locally**:
 
